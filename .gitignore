@@ -3,6 +3,8 @@
 .env.*
 *.pem
 *.key
+secrets/
+credentials/
 
 # Dependencies
 node_modules/
@@ -10,6 +12,12 @@ node_modules/
 # Build output
 dist/
 build/
+
+# Logs and local data
+*.log
+*.sqlite
+*.sqlite3
+*.db
 
 # OS / editor
 .DS_Store
