@@ -17,6 +17,34 @@ services:
       retries: 3
       start_period: 5s
 
+  inhouse-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: inhouse-api:local
+    container_name: inhouse-api
+    restart: unless-stopped
+    environment:
+      INHOUSE_API_ENV: ${INHOUSE_API_ENV:-production}
+      INHOUSE_API_HOST: 0.0.0.0
+      INHOUSE_API_PORT: ${INHOUSE_API_PORT:-8092}
+      INHOUSE_API_LOG_LEVEL: ${INHOUSE_API_LOG_LEVEL:-info}
+      INHOUSE_API_CORS_ORIGINS: ${INHOUSE_API_CORS_ORIGINS:-}
+    ports:
+      - "127.0.0.1:${INHOUSE_API_PORT:-8092}:${INHOUSE_API_PORT:-8092}"
+    networks:
+      - inhouse-net
+    healthcheck:
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "require('node:http').get({host:'127.0.0.1',port:process.env.INHOUSE_API_PORT||8092,path:'/health'},(res)=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
 networks:
   inhouse-net:
     name: inhouse-net

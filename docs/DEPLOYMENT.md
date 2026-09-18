@@ -1,10 +1,10 @@
-# Inhouse — Deployment Foundation (Block 03, Prompt 1)
+# Inhouse — Deployment Foundation (Block 03, extended in Block 04)
 
 ## Status
 
-Frontend-only deployment foundation. No backend, database, worker, or
-gateway exists yet. This document will grow as later blocks add those
-pieces.
+Frontend and backend/API deployment foundations exist. No database or
+worker exists yet. See `docs/API.md` for the backend's API contract. This
+document will grow as later blocks add those pieces.
 
 ## VPS Discovery (read-only, recorded at time of Block 03 Prompt 1)
 
@@ -34,6 +34,9 @@ pieces.
 **Port selected for INHOUSE frontend: `8091`**, bound to `127.0.0.1` only.
 Confirmed free via `ss -tln` before use. Not exposed publicly — see
 "Domain / Network" below.
+
+**Port selected for INHOUSE API (Block 04): `8092`**, bound to `127.0.0.1`
+only. Re-confirmed free via `ss -tln` immediately before use.
 
 ### Existing Nginx server blocks (untouched)
 
@@ -117,16 +120,39 @@ mechanism):**
   narrow, explicit Block 03 exception to "don't modify the Block 02
   baseline."
 
+## Backend/API Deployment (Block 04)
+
+- `backend/` is a TypeScript + Fastify service, provider-neutral and
+  database-free at this stage. Full API contract in `docs/API.md`.
+- Multi-stage `backend/Dockerfile`: `node:22-alpine` builds
+  (`npm ci && npm run build`), then a second `node:22-alpine` stage runs
+  `npm ci --omit=dev` and starts `node dist/server.js` — no build tooling
+  ships in the runtime image.
+- Docker Compose gained a second, independent service: `inhouse-api`
+  (container `inhouse-api`), on the same dedicated `inhouse-net` network as
+  `inhouse-frontend` so the two can reach each other by container name in a
+  later block — no functional wiring between them exists yet.
+- Published to the host as `127.0.0.1:${INHOUSE_API_PORT:-8092}` only, same
+  loopback-only pattern as the frontend.
+- Docker `HEALTHCHECK` uses a Node one-liner (`node -e ...` hitting
+  `GET /health`) rather than `wget`/`curl`, since the `node:22-alpine`
+  runtime image includes neither.
+
 ## Environment Configuration
 
-`.env.example` at the repo root defines one variable:
+`.env.example` at the repo root defines:
 
 ```
 INHOUSE_FRONTEND_PORT=8091
+INHOUSE_API_PORT=8092
+INHOUSE_API_ENV=production
+INHOUSE_API_LOG_LEVEL=info
+INHOUSE_API_CORS_ORIGINS=
 ```
 
 No real values, secrets, API keys, or credentials are present. `.env` is
-already covered by the root `.gitignore` (`.env`, `.env.*`).
+already covered by the root `.gitignore` (`.env`, `.env.*`). The API's own
+configuration variables are documented in full in `docs/API.md`.
 
 ## Health / Operability
 
@@ -142,6 +168,15 @@ already covered by the root `.gitignore` (`.env`, `.env.*`).
 - **Stoppable independently:** `docker compose down` removes the
   container and the dedicated `inhouse-net` network without affecting any
   other container, network, PM2 process, or systemd unit.
+- **Backend verified the same way (Block 04):** `docker compose build
+  inhouse-api` and `docker compose up -d inhouse-api` succeeded;
+  `GET /health`, `/v1/health`, `/ready` all returned 200 with the
+  documented deterministic payloads; an unknown route returned the
+  standard `{error:{code,message,requestId}}` 404 shape; the Docker
+  `HEALTHCHECK` reported `healthy`. PM2 restart counts
+  (`adorbis-api`: 12, `timespace`: 1) and the existing Docker container
+  list were identical before and after the test. `docker compose down`
+  then removed `inhouse-api` and `inhouse-net` cleanly.
 
 ## Security Verification
 
@@ -155,7 +190,12 @@ already covered by the root `.gitignore` (`.env`, `.env.*`).
 - No existing Adorbis configuration, credentials, or source files were
   read into or copied into this repository.
 - `frontend/.dockerignore` excludes `node_modules`, `dist`, and `.git`
-  from the Docker build context.
+  from the Docker build context; `backend/.dockerignore` does the same plus
+  `test/`.
+- Backend secret scan (Block 04): no API keys, provider credentials,
+  passwords, tokens, or database credentials found anywhere under
+  `backend/`. No provider SDK dependency was added (Fastify + its own
+  `@fastify/cors`/`@fastify/helmet` plugins only).
 
 ## Isolation Verification
 
@@ -166,6 +206,8 @@ already covered by the root `.gitignore` (`.env`, `.env.*`).
   to.
 - No existing Docker container, image, network, or volume was modified or
   removed.
-- No existing service was started, stopped, or restarted, except a
-  temporary, isolated test of the new `inhouse-frontend` container itself
-  (built, health-checked, then stopped — see Prompt 1 test log).
+- No existing service was started, stopped, or restarted, except temporary,
+  isolated tests of the new `inhouse-frontend` (Block 03) and `inhouse-api`
+  (Block 04) containers themselves — each built, health-checked, then
+  stopped and removed along with the dedicated `inhouse-net` network (see
+  the Prompt 1 test logs in each block's section above).

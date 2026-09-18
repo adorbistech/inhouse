@@ -15,3 +15,4 @@ Inhouse is an independent beta project.
 
 See `docs/INHOUSE_SCOPE.md` and `docs/DEVELOPMENT_RULES.md` for details.
 See `docs/DEPLOYMENT.md` for the VPS deployment/runtime foundation.
+See `docs/API.md` for the backend API contract.
