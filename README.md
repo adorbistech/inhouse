@@ -14,3 +14,4 @@ Inhouse is an independent beta project.
 - Work proceeds block-by-block, with each block tested before moving on.
 
 See `docs/INHOUSE_SCOPE.md` and `docs/DEVELOPMENT_RULES.md` for details.
+See `docs/DEPLOYMENT.md` for the VPS deployment/runtime foundation.
