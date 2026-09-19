@@ -282,6 +282,49 @@ test("credential creation requires an account that belongs to the given vendor",
   });
 });
 
+test("adapterSupported (Block 10) is computed from the code-defined adapter registry, never stored, and is false for a provider with no adapter", async () => {
+  await withMigratedApp(async (app, pool) => {
+    await truncateAll(pool, "inhouse");
+    // `sampleVendorPayload` uses protocol "custom_rest" — a real, valid, database-configured
+    // protocol with no registered adapter. That must never read as executable.
+    const created = (await app.inject({ method: "POST", url: "/v1/vendors", payload: sampleVendorPayload })).json()
+      .vendor;
+    assert.equal(created.protocol, "custom_rest");
+    assert.equal(created.adapterSupported, false);
+
+    const listRes = await app.inject({ method: "GET", url: "/v1/vendors" });
+    assert.equal(listRes.json().vendors[0].adapterSupported, false);
+
+    const getRes = await app.inject({ method: "GET", url: `/v1/vendors/${created.id}` });
+    assert.equal(getRes.json().vendor.adapterSupported, false);
+
+    // Never persisted on the row itself — purely a serialization-time computation.
+    const row = await pool.query("SELECT * FROM vendors WHERE id = $1", [created.id]);
+    assert.ok(!("adapter_supported" in row.rows[0]));
+  });
+});
+
+test("adapterSupported (Block 10) is true for a vendor configured with a protocol that has a registered adapter", async () => {
+  await withMigratedApp(async (app, pool) => {
+    await truncateAll(pool, "inhouse");
+    const created = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/vendors",
+        payload: { ...sampleVendorPayload, slug: "openai-compatible-vendor", protocol: "openai-compatible" },
+      })
+    ).json().vendor;
+    assert.equal(created.adapterSupported, true);
+
+    const disabled = (
+      await app.inject({ method: "DELETE", url: `/v1/vendors/${created.id}` })
+    ).json().vendor;
+    // Adapter support is a fact about the protocol, independent of the vendor's own enabled/disabled status.
+    assert.equal(disabled.status, "disabled");
+    assert.equal(disabled.adapterSupported, true);
+  });
+});
+
 test("GET /v1/capabilities and /v1/workloads reflect database rows, empty by default", async () => {
   await withMigratedApp(async (app, pool) => {
     await truncateAll(pool, "inhouse");

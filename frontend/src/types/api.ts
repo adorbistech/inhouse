@@ -83,6 +83,16 @@ export interface VendorApi {
   retryOn5xx: boolean;
   retryOnAuthFailure: boolean;
   retryOnInvalidResponse: boolean;
+  /**
+   * Block 10 — computed from the backend's code-defined protocol/adapter
+   * registry, never stored on the vendor row. `true` means a technical
+   * adapter exists for this vendor's `protocol` (so it *could* be
+   * executed once a later block adds routing/execution); `false` means
+   * this provider is fully configured but not yet executable — a normal,
+   * expected state, not an error. Distinct from `status`, which is
+   * operator intent about whether the vendor should be used at all.
+   */
+  adapterSupported: boolean;
   createdAt: string;
   updatedAt: string;
 }

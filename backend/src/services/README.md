@@ -25,10 +25,18 @@ No SQL lives here — every query goes through a typed repository.
   network calls, and does not write to `audit_events` (health is
   operational telemetry, not an administrative action). See
   `docs/PROVIDER_HEALTH.md`.
-- `providerAdapter.ts` (Block 09) — not a service, an interface. Defines
-  the `ProviderAdapter`/`ProviderHealthCheckResult` shape a future block
-  will implement to perform a real, network-calling health check.
-  Nothing in this codebase implements or calls it yet.
+- `providerAdapter.ts` (Block 09, extended in Block 10) — not a service,
+  an interface. Defines the `ProviderAdapter` shape: Block 09's
+  `checkHealth`/`ProviderHealthCheckResult`, plus Block 10's `execute`/
+  `NormalizedProviderRequest`/`NormalizedProviderResponse`/
+  `NormalizedProviderError`. No route calls either method.
+- `adapters/` (Block 10) — the protocol adapter registry
+  (`adapterRegistry.ts`: `AdapterRegistry`, `createDefaultAdapterRegistry`),
+  the one concrete adapter (`openAiCompatibleAdapter.ts`, protocol
+  `"openai-compatible"`), and shared HTTP-status/error-mapping helpers
+  (`httpErrorMapping.ts`). Looked up by `vendors.protocol`, never by
+  vendor identity — a vendor whose protocol has no registered adapter is
+  an expected, normal state. See `docs/PROVIDER_ADAPTERS.md`.
 
 Reserved for future Inhouse business logic not yet built: routing,
-telemetry, accounting, real provider adapters.
+telemetry, accounting, wiring an adapter into an actual execution path.

@@ -1,11 +1,15 @@
-# Inhouse API (Block 04 — Foundation, persistence added in Block 05, Vendor System added in Block 06, Model Catalog added in Block 07, Credential Vault added in Block 08, Provider Account Health Foundation added in Block 09)
+# Inhouse API (Block 04 — Foundation, persistence added in Block 05, Vendor System added in Block 06, Model Catalog added in Block 07, Credential Vault added in Block 08, Provider Account Health Foundation added in Block 09, Provider Adapter / Integration Layer added in Block 10)
 
 ## Status
 
-Authentication, model execution, routing, provider adapters, telemetry,
-and accounting still do not exist. Those remain later blocks.
-`/root/adorbis-api` is a separate, external service — Inhouse does not
-call it yet and this document does not cover it.
+Authentication, model execution, routing, telemetry, and accounting still
+do not exist. Those remain later blocks. **Block 10 adds the first real
+provider adapter implementation and a protocol/adapter registry** — see
+`docs/PROVIDER_ADAPTERS.md` — but still exposes no execution endpoint of
+any kind; the only HTTP-visible change is the `adapterSupported` field on
+every vendor response (see "Vendor System" below). `/root/adorbis-api` is
+a separate, external service — Inhouse does not call it yet and this
+document does not cover it.
 
 Block 05 added a PostgreSQL persistence layer (SQL migrations, a
 dedicated Inhouse schema, and typed repositories — see
@@ -37,7 +41,11 @@ matters going forward:
   (Block 08)". **Block 09 makes zero network calls of any kind** — every
   health row in this block is created by a test or an operator calling
   `ProviderHealthService` directly, never by actually checking a
-  provider. See `docs/PROVIDER_HEALTH.md`.
+  provider. See `docs/PROVIDER_HEALTH.md`. **Block 10 adds a real,
+  network-calling protocol adapter (`OpenAiCompatibleAdapter`) and a
+  registry to look one up by protocol — but still no route calls it.**
+  Every real network call this block makes happens only inside a test.
+  See `docs/PROVIDER_ADAPTERS.md`.
 - **No route implements authentication.** Every endpoint below, including
   the Vendor System and Model Catalog, is unauthenticated in this block
   (see "Authentication"). Block 08's vault protects *provider* credentials
@@ -135,6 +143,18 @@ them to make a live decision yet.
 A vendor status is one of `enabled` / `disabled` / `unavailable` —
 enforced by request validation, not a database constraint (see
 `docs/DATABASE.md`).
+
+**`adapterSupported` (Block 10):** every vendor response (list, detail,
+create, update, status-change) now includes `"adapterSupported": boolean`
+— computed at response time from the backend's code-defined protocol/
+adapter registry (`AdapterRegistry.has(vendor.protocol)`,
+`docs/PROVIDER_ADAPTERS.md`), never stored on the row and never derived
+from `status`. `false` means "this vendor is fully configured but no
+technical adapter exists for its `protocol` yet" — a normal state, not an
+error. As of Block 10, only the `"openai-compatible"` protocol has a
+registered adapter; every other `protocol` value (including
+`"custom_rest"`, used throughout this document's and the test suite's
+sample payloads) reports `adapterSupported: false`.
 
 ### Vendor Accounts
 

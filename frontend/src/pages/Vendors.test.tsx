@@ -58,6 +58,7 @@ function sampleVendor(overrides: Partial<VendorApi> = {}): VendorApi {
     retryOn5xx: false,
     retryOnAuthFailure: false,
     retryOnInvalidResponse: false,
+    adapterSupported: false,
     createdAt: "2026-09-19T00:00:00Z",
     updatedAt: "2026-09-19T00:00:00Z",
     ...overrides,
@@ -222,6 +223,29 @@ describe("Vendors page", () => {
 
     await userEvent.click(screen.getByText("Secondary Account"));
     expect(await screen.findByText(/vault:\/\/secondary/)).toBeInTheDocument();
+  });
+
+  test("Block 10: a vendor with no registered adapter for its protocol shows 'No Adapter', never as executable", async () => {
+    const vendor = sampleVendor({ adapterSupported: false });
+    vi.mocked(api.listVendors).mockResolvedValue({ vendors: [vendor] });
+    vi.mocked(api.getVendor).mockResolvedValue({ vendor: toDetail(vendor) });
+
+    render(<Vendors />);
+
+    expect(await screen.findByText("Test Vendor")).toBeInTheDocument();
+    expect(screen.getByText(/no adapter/i)).toBeInTheDocument();
+    expect(screen.queryByText(/adapter ready/i)).not.toBeInTheDocument();
+  });
+
+  test("Block 10: a vendor whose protocol has a registered adapter shows 'Adapter Ready'", async () => {
+    const vendor = sampleVendor({ adapterSupported: true, protocol: "openai-compatible" });
+    vi.mocked(api.listVendors).mockResolvedValue({ vendors: [vendor] });
+    vi.mocked(api.getVendor).mockResolvedValue({ vendor: toDetail(vendor) });
+
+    render(<Vendors />);
+
+    expect(await screen.findByText("Test Vendor")).toBeInTheDocument();
+    expect(screen.getByText(/adapter ready/i)).toBeInTheDocument();
   });
 
   test("capabilities tab shows a data-driven empty state instead of hardcoded options", async () => {

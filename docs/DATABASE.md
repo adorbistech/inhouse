@@ -17,11 +17,19 @@ schema change only. **Block 09 adds `vendor_account_health` and
 operational health for a vendor account, read-only over HTTP, with the
 adapter interface a later block will implement — see
 `docs/PROVIDER_HEALTH.md`.
+**Block 10 adds no schema change at all** — inspection confirmed the
+existing `vendors`/`vendor_accounts`/`vendor_credentials`/`models`
+schema already fully represents provider identity, protocol, endpoint,
+accounts, credentials, and models; the protocol → adapter mapping it adds
+is code (`backend/src/services/adapters/adapterRegistry.ts`), never a
+table. See `docs/PROVIDER_ADAPTERS.md`.
+
 Still not implemented, in any block so far:
 
-- provider integrations (real calls to a vendor's API) — Block 09
-  defines the `ProviderAdapter` interface a real integration will
-  implement, but nothing in this codebase makes a network call yet
+- ~~provider integrations (real calls to a vendor's API)~~ — Block 10
+  adds the first one (`OpenAiCompatibleAdapter`, for the
+  `"openai-compatible"` protocol), but nothing in this codebase calls it
+  from a route yet. See `docs/PROVIDER_ADAPTERS.md`.
 - model execution
 - a routing engine (routing *configuration* is persisted; nothing
   executes it)
@@ -170,7 +178,10 @@ All tables include `created_at`/`updated_at` (UTC, `TIMESTAMPTZ`, default
   seeded. Lifecycle status is one of `enabled` / `disabled` /
   `unavailable` (enforced at the API validation layer — the column
   itself remains plain `TEXT`, unconstrained by the database, matching
-  Block 05's original design).
+  Block 05's original design). **`protocol` is also what Block 10's
+  code-defined adapter registry looks adapters up by** — whether a given
+  `protocol` value has a registered adapter is never stored on this row;
+  see `docs/PROVIDER_ADAPTERS.md`.
 - **vendor_accounts** — one or more accounts per vendor.
 - **vendor_account_health** / **vendor_account_health_events** (Block 09)
   — observed operational health for an account: a current snapshot

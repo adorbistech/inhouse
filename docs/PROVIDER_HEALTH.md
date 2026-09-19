@@ -89,7 +89,7 @@ returns onto this fixed set is a future adapter's job.
 ## Provider Adapter Boundary
 
 `backend/src/services/providerAdapter.ts` defines the interface a real
-adapter (a later block) will implement:
+adapter implements. As originally written in Block 09:
 
 ```ts
 interface ProviderAdapter {
@@ -97,25 +97,39 @@ interface ProviderAdapter {
 }
 ```
 
+**Block 10 extended this** (see `docs/PROVIDER_ADAPTERS.md` for the full
+current shape) — `checkHealth` gained a `config: ProviderAdapterConfig`
+parameter (`{ baseEndpoint, timeoutMs }`), because a protocol-generic
+adapter cannot know which vendor's endpoint to call without it, and the
+interface gained an `execute()` method for request/response
+normalization. Nothing implemented the interface as of Block 09, so
+extending it was a safe, additive change, not a breaking one.
+
 `ProviderHealthCheckResult`'s shape (`status`, `latencyMs`,
 `errorCategory`, `safeErrorCode`) is exactly what
 `ProviderHealthService.recordObservation()` expects as input — the
 seam between "an adapter observed reality" and "the health service
-persisted it" is explicit and provider-agnostic. **Block 09 implements
+persisted it" is explicit and provider-agnostic. **Block 09 implemented
 neither the interface's real behavior nor any concrete adapter** — no
 OpenAI/Anthropic/Gemini/etc. adapter, no `if (vendorType === "...")`
-branching anywhere in this codebase.
+branching anywhere in this codebase. **Block 10 adds the first real
+implementation** (`OpenAiCompatibleAdapter`, for the `"openai-compatible"`
+*protocol* — never a business-provider-specific class), and proves the
+full seam works in `test/db/adapterHealthIntegration.test.ts`, but still
+wires nothing into a running route or scheduled job — see
+`docs/PROVIDER_ADAPTERS.md`.
 
 ### Credential integration
 
-A future adapter's `checkHealth(secret)` would receive its secret from
+An adapter's `checkHealth(secret, config)` receives its secret from
 Block 08's existing narrow boundary,
 `services/credentialSecretAccess.ts`'s `getDecryptedCredentialSecret` —
-Block 09 does not duplicate that decryption logic, add another secret
-store, or expose a decrypted credential anywhere. That function's
-existing safe default carries over unchanged: **a disabled credential's
-secret cannot be decrypted**, so a future adapter naturally cannot check
-health using a disabled credential either.
+neither Block 09 nor Block 10 duplicates that decryption logic, adds
+another secret store, or exposes a decrypted credential anywhere. That
+function's existing safe default carries over unchanged: **a disabled
+credential's secret cannot be decrypted**, so an adapter cannot check
+health using a disabled credential either (see
+`test/db/adapterHealthIntegration.test.ts`).
 
 ## Why No Write Endpoint
 
@@ -153,10 +167,20 @@ noise without adding information.
 
 ## What Block 09 Does *Not* Implement
 
-- Any real provider adapter (OpenAI, Anthropic, Gemini, or otherwise) —
-  only the interface future adapters will implement.
-- Any network call to any provider, or any provider health-check
-  endpoint.
+> **Superseded in part by Block 10** — see `docs/PROVIDER_ADAPTERS.md`.
+> Block 10 implements a real `ProviderAdapter` (`OpenAiCompatibleAdapter`)
+> and proves the credential → adapter → `ProviderHealthService` seam
+> end-to-end in tests, but still wires none of it into a running route or
+> scheduled job. Everything below that isn't explicitly called out as
+> superseded remains true after Block 10.
+
+- ~~Any real provider adapter (OpenAI, Anthropic, Gemini, or
+  otherwise)~~ — Block 10 adds the first one, `OpenAiCompatibleAdapter`,
+  for the `"openai-compatible"` *protocol* (not any one business
+  provider). See `docs/PROVIDER_ADAPTERS.md`.
+- ~~Any network call to any provider~~ — Block 10's adapter makes real
+  (test-only, never live-provider) HTTP calls. **Still true: no provider
+  health-check endpoint** — there remains no route that triggers one.
 - Routing, model selection, priority, fallback, failover, load
   balancing, cost optimization, or quota enforcement.
 - `/chat/completions`-style execution, Claude Code compatibility, prompt

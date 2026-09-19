@@ -52,7 +52,18 @@ export function toAccountResponse(account: VendorAccountRow) {
   };
 }
 
-export function toVendorResponse(vendor: VendorRow) {
+/**
+ * `adapterSupported` is computed at serialization time from the Block 10
+ * adapter registry (`services/adapters/adapterRegistry.ts`) — it is never
+ * stored on the `vendors` row. A vendor is data; whether a technical
+ * adapter exists for its `protocol` is a fact about the running code, and
+ * the two must never be conflated (see docs/PROVIDER_ADAPTERS.md,
+ * "Provider Data vs. Adapter Code"). `false` means exactly "this provider
+ * is fully configured but has no adapter to execute against yet" — not an
+ * error, and not something the API infers from `status` or anything else
+ * on the row.
+ */
+export function toVendorResponse(vendor: VendorRow, adapterSupported: boolean) {
   return {
     id: vendor.id,
     slug: vendor.slug,
@@ -75,14 +86,15 @@ export function toVendorResponse(vendor: VendorRow) {
     retryOn5xx: vendor.retry_on_5xx,
     retryOnAuthFailure: vendor.retry_on_auth_failure,
     retryOnInvalidResponse: vendor.retry_on_invalid_response,
+    adapterSupported,
     createdAt: vendor.created_at,
     updatedAt: vendor.updated_at,
   };
 }
 
-export function toVendorDetailResponse(detail: VendorDetail) {
+export function toVendorDetailResponse(detail: VendorDetail, adapterSupported: boolean) {
   return {
-    ...toVendorResponse(detail),
+    ...toVendorResponse(detail, adapterSupported),
     accounts: detail.accounts.map(toAccountResponse),
     capabilities: detail.capabilities.map(toCapabilityResponse),
     workloads: detail.workloads.map(toWorkloadResponse),

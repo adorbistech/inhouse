@@ -2,8 +2,9 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config/index.js";
 import type { CredentialVaultService } from "../lib/credentialVault.js";
-import type { VendorCredentialRow } from "../repositories/types.js";
-import { VendorService } from "../services/vendorService.js";
+import type { VendorCredentialRow, VendorRow } from "../repositories/types.js";
+import { type AdapterRegistry, createDefaultAdapterRegistry } from "../services/adapters/adapterRegistry.js";
+import { VendorService, type VendorDetail } from "../services/vendorService.js";
 import {
   validateAccountPatchInput,
   validateCreateAccountInput,
@@ -59,41 +60,46 @@ export function registerVendorRoutes(
   pool: Pool,
   config: AppConfig,
   credentialVault: CredentialVaultService,
+  adapterRegistry: AdapterRegistry = createDefaultAdapterRegistry(),
 ): void {
   const service = new VendorService(pool, credentialVault);
+
+  const vendorResponse = (vendor: VendorRow) => toVendorResponse(vendor, adapterRegistry.has(vendor.protocol));
+  const vendorDetailResponse = (detail: VendorDetail) =>
+    toVendorDetailResponse(detail, adapterRegistry.has(detail.protocol));
 
   app.register(
     async (versioned) => {
       versioned.get("/vendors", async (request) => {
         const query = request.query as { status?: string };
         const vendors = await service.list({ status: query.status });
-        return { vendors: vendors.map(toVendorResponse) };
+        return { vendors: vendors.map(vendorResponse) };
       });
 
       versioned.get("/vendors/:id", async (request) => {
         const { id } = request.params as { id: string };
         const vendor = await service.getDetail(requireUuidParam(id, "id"));
-        return { vendor: toVendorDetailResponse(vendor) };
+        return { vendor: vendorDetailResponse(vendor) };
       });
 
       versioned.post("/vendors", async (request, reply) => {
         const input = validateCreateVendorInput(request.body);
         const vendor = await service.create(input, auditContext(request));
         reply.code(201);
-        return { vendor: toVendorDetailResponse(vendor) };
+        return { vendor: vendorDetailResponse(vendor) };
       });
 
       versioned.patch("/vendors/:id", async (request) => {
         const { id } = request.params as { id: string };
         const patch = validateVendorPatchInput(request.body);
         const vendor = await service.update(requireUuidParam(id, "id"), patch, auditContext(request));
-        return { vendor: toVendorDetailResponse(vendor) };
+        return { vendor: vendorDetailResponse(vendor) };
       });
 
       versioned.delete("/vendors/:id", async (request) => {
         const { id } = request.params as { id: string };
         const vendor = await service.setStatus(requireUuidParam(id, "id"), "disabled", auditContext(request));
-        return { vendor: toVendorDetailResponse(vendor) };
+        return { vendor: vendorDetailResponse(vendor) };
       });
 
       versioned.put("/vendors/:id/capabilities", async (request) => {

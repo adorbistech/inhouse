@@ -343,6 +343,9 @@ export function Vendors() {
                             {v.displayName}
                           </span>
                           <Chip tone="primary">{titleCase(v.vendorType)}</Chip>
+                          <Chip tone={v.adapterSupported ? "tertiary" : undefined}>
+                            {v.adapterSupported ? "Adapter Ready" : "No Adapter"}
+                          </Chip>
                         </div>
                         <span className="font-code-dense text-code-dense text-on-surface-variant truncate block">
                           Proto: {titleCase(v.protocol)} • Priority {v.priority}
@@ -463,6 +466,11 @@ export function Vendors() {
                       label="Workloads"
                       value={selectedDetail.workloads.map((w) => titleCase(w.slug)).join(", ") || "None"}
                     />
+                    <InfoTile
+                      label="Adapter Support"
+                      value={selectedDetail.adapterSupported ? "Available" : "Not Available"}
+                      accent={selectedDetail.adapterSupported ? "tertiary" : undefined}
+                    />
                     <InfoTile label="Accounts" value={`${selectedDetail.accounts.length} configured`} />
                     <InfoTile label="Created" value={formatDateTime(selectedDetail.createdAt)} />
                     <div className="sm:col-span-3 bg-surface p-space-sm font-body-sm text-body-sm text-on-surface-variant">
@@ -474,6 +482,7 @@ export function Vendors() {
                 {activeTab === "credential" && (
                   <VendorAccountsAndCredentials
                     vendorId={selectedDetail.id}
+                    adapterSupported={selectedDetail.adapterSupported}
                     accounts={selectedDetail.accounts}
                     selectedAccount={selectedAccount}
                     credential={accountCredential}
@@ -592,6 +601,7 @@ export function Vendors() {
 
 function VendorAccountsAndCredentials({
   vendorId,
+  adapterSupported,
   accounts,
   selectedAccount,
   credential,
@@ -600,6 +610,7 @@ function VendorAccountsAndCredentials({
   onError,
 }: {
   vendorId: string;
+  adapterSupported: boolean;
   accounts: VendorAccountApi[];
   selectedAccount: VendorAccountApi | undefined;
   credential: VendorCredentialApi | undefined;
@@ -872,7 +883,15 @@ function VendorAccountsAndCredentials({
                     <Icon name={credential.status === "enabled" ? "toggle_off" : "toggle_on"} size={16} />
                     {credential.status === "enabled" ? "Disable" : "Enable"}
                   </Button>
-                  <Button variant="secondary" disabled title="Provider connection testing is implemented in a later block.">
+                  <Button
+                    variant="secondary"
+                    disabled
+                    title={
+                      adapterSupported
+                        ? "A technical adapter exists for this vendor's protocol, but connection testing/execution is implemented in a later block."
+                        : "No technical adapter is registered for this vendor's protocol yet, and connection testing/execution is implemented in a later block."
+                    }
+                  >
                     <Icon name="bolt" size={16} />
                     Test Connection (Not Yet Available)
                   </Button>

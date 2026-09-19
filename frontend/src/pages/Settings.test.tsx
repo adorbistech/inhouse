@@ -49,6 +49,7 @@ function sampleVendor(overrides: Partial<VendorApi> = {}): VendorApi {
     retryOn5xx: false,
     retryOnAuthFailure: false,
     retryOnInvalidResponse: false,
+    adapterSupported: false,
     createdAt: "2026-09-19T00:00:00Z",
     updatedAt: "2026-09-19T00:00:00Z",
     ...overrides,
