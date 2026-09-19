@@ -5,6 +5,8 @@ import type {
   ModelApi,
   ModelDetailApi,
   ModelListFilters,
+  ProviderHealthApi,
+  ProviderHealthEventApi,
   UpdateModelPayload,
   UpdateVendorPayload,
   VendorAccountApi,
@@ -188,4 +190,12 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ workloadIds }),
     }),
+
+  getAccountHealth: (vendorId: string, accountId: string) =>
+    request<{ health: ProviderHealthApi }>(`/vendors/${vendorId}/accounts/${accountId}/health`),
+
+  getAccountHealthEvents: (vendorId: string, accountId: string, limit?: number) =>
+    request<{ events: ProviderHealthEventApi[] }>(
+      `/vendors/${vendorId}/accounts/${accountId}/health/events${limit ? `?limit=${limit}` : ""}`,
+    ),
 };

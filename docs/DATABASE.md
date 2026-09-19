@@ -1,4 +1,4 @@
-# Inhouse Database (Block 05 — Persistence Foundation, extended in Block 06, Block 07, and Block 08)
+# Inhouse Database (Block 05 — Persistence Foundation, extended in Block 06, Block 07, Block 08, and Block 09)
 
 ## Status
 
@@ -12,11 +12,16 @@ Block 07 added a second data-driven service, the Model Catalog
 required. **Block 08 extends `vendor_credentials` (migration `0011`)
 with a real, INHOUSE-managed authenticated-encryption vault** — see
 `docs/CREDENTIAL_VAULT.md` for the full design; this document covers the
-schema change only.
+schema change only. **Block 09 adds `vendor_account_health` and
+`vendor_account_health_events` (migration `0012`)** — observed
+operational health for a vendor account, read-only over HTTP, with the
+adapter interface a later block will implement — see
+`docs/PROVIDER_HEALTH.md`.
 Still not implemented, in any block so far:
 
-- provider integrations (real calls to a vendor's API)
-- a provider credential vault/encryption mechanism
+- provider integrations (real calls to a vendor's API) — Block 09
+  defines the `ProviderAdapter` interface a real integration will
+  implement, but nothing in this codebase makes a network call yet
 - model execution
 - a routing engine (routing *configuration* is persisted; nothing
   executes it)
@@ -146,6 +151,14 @@ comment); a second, parallel credential table would have duplicated the
 vendor-account relationship and lifecycle logic that already exist here.
 Existing rows (all `secret_ref`-mode) remain valid without a backfill.
 
+**Block 09 migration:** `0012_vendor_account_health.sql` adds two new
+tables — `vendor_account_health` (current snapshot, one row per account)
+and `vendor_account_health_events` (append-only history) — both keyed to
+`vendor_account_id`. `vendor_accounts` itself is unchanged: its existing
+`id`/`slug`/`display_name`/`status`/`external_account_ref` already fully
+represent account identity, so no columns were added to it. See
+"Provider Account Health" below and `docs/PROVIDER_HEALTH.md`.
+
 ## Schema — Entities
 
 All tables include `created_at`/`updated_at` (UTC, `TIMESTAMPTZ`, default
@@ -159,6 +172,12 @@ All tables include `created_at`/`updated_at` (UTC, `TIMESTAMPTZ`, default
   itself remains plain `TEXT`, unconstrained by the database, matching
   Block 05's original design).
 - **vendor_accounts** — one or more accounts per vendor.
+- **vendor_account_health** / **vendor_account_health_events** (Block 09)
+  — observed operational health for an account: a current snapshot
+  (status, consecutive failures, last latency/error) and its append-only
+  observation history. Distinct from `vendor_accounts.status`, which is
+  operator intent, not an observed fact. No raw provider error body or
+  request/response data is ever stored — see `docs/PROVIDER_HEALTH.md`.
 - **vendor_capabilities** / **vendor_workloads** (Block 06) — which
   capabilities a vendor advertises and which workloads it may serve, as
   data. Distinct from `model_capabilities`/`model_workloads`, which
@@ -273,7 +292,7 @@ restarts/recreations. A backup/restore strategy (e.g. `pg_dump` on a
 schedule) is deferred to a later block once there is real data worth
 protecting.
 
-## What Block 05 Did *Not* Implement (superseded where Block 06/07/08 adds it)
+## What Block 05 Did *Not* Implement (superseded where Block 06/07/08/09 adds it)
 
 - ~~HTTP CRUD routes over any of these tables~~ — Block 06 adds the
   Vendor System's CRUD API over `vendors`, `vendor_accounts`,
@@ -286,10 +305,19 @@ protecting.
   **Provider integrations themselves are still not implemented** — Block
   08 only builds the storage/decrypt boundary; nothing calls a provider
   with a decrypted secret yet.
+- ~~A place to observe provider-account health~~ — Block 09 adds
+  `vendor_account_health`/`vendor_account_health_events` plus a
+  read-only API over them. **Still not implemented: any actual health
+  check.** Every row in this block is written by a test or an operator
+  calling `ProviderHealthService` directly — Block 09 defines the
+  `ProviderAdapter` interface a later block will implement to perform a
+  real, network-calling check. See `docs/PROVIDER_HEALTH.md`.
 - Model execution or a routing engine — still not implemented; Block
   06/07 persist routing-*adjacent* configuration (vendor priority/retry
   flags, which capabilities/workloads a model supports) but nothing
-  executes it.
+  executes it. Block 09's health data is exactly the kind of signal a
+  future routing engine would consume, but nothing reads it for that
+  purpose yet.
 - API authentication (issuing/validating `inhouse_api_keys`) — still not
   implemented. (Not to be confused with Block 08's credential vault,
   which protects *provider* secrets, not Inhouse API access.)
@@ -297,5 +325,5 @@ protecting.
 - Cost/pricing calculation or any pricing seed data — still not
   implemented.
 - Seed data for any real vendor, model, or provider name — still true in
-  Block 08: no vendor, model, or credential is created except through the
-  API, by an operator.
+  Block 09: no vendor, model, credential, or health observation is
+  created except through the API/service layer, by an operator or test.

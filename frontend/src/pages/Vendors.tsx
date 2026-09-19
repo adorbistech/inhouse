@@ -13,6 +13,7 @@ import type { HealthState } from "../types/domain";
 import type {
   CapabilityApi,
   CreateVendorPayload,
+  ProviderHealthApi,
   VendorAccountApi,
   VendorApi,
   VendorCredentialApi,
@@ -39,6 +40,22 @@ const DETAIL_TABS = [
 function vendorStatusToHealthState(status: VendorStatus): HealthState {
   if (status === "enabled") return "healthy";
   if (status === "unavailable") return "unreachable";
+  return "disabled";
+}
+
+/**
+ * Maps Block 09's observed provider-account health onto the same
+ * `HealthState`/`StatusPill` the rest of this page already uses for
+ * vendor status — a distinct concept (this is an *observation*, not an
+ * operator's administrative status), reusing the existing visual
+ * language rather than inventing a second one. `"unknown"` (never
+ * checked — no adapter exists yet) renders the same as "disabled": a
+ * neutral, non-alarming state, not a false "healthy".
+ */
+function providerHealthToState(status: ProviderHealthApi["status"]): HealthState {
+  if (status === "healthy") return "healthy";
+  if (status === "degraded") return "degraded";
+  if (status === "unhealthy") return "unreachable";
   return "disabled";
 }
 
@@ -602,6 +619,26 @@ function VendorAccountsAndCredentials({
   const [rotateSecretMode, setRotateSecretMode] = useState<"managed" | "external">("managed");
   const [rotateSecret, setRotateSecret] = useState("");
   const [rotateSecretRef, setRotateSecretRef] = useState("");
+  const [health, setHealth] = useState<ProviderHealthApi | null>(null);
+
+  useEffect(() => {
+    if (!selectedAccount) {
+      setHealth(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .getAccountHealth(vendorId, selectedAccount.id)
+      .then(({ health: h }) => {
+        if (!cancelled) setHealth(h);
+      })
+      .catch(() => {
+        if (!cancelled) setHealth(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vendorId, selectedAccount]);
 
   async function submitNewAccount() {
     try {
@@ -740,6 +777,24 @@ function VendorAccountsAndCredentials({
 
       {selectedAccount && (
         <div className="flex flex-col gap-space-sm">
+          <div className="flex flex-col gap-space-xs">
+            <span className="font-code-dense text-code-dense text-outline uppercase tracking-wider">
+              Account Health — {selectedAccount.displayName}
+            </span>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-space-sm bg-surface p-space-sm">
+              <StatusPill
+                state={providerHealthToState(health?.status ?? "unknown")}
+                detail={health && health.status !== "unknown" ? titleCase(health.status) : "Unknown — Not Checked"}
+              />
+              {health && health.status !== "unknown" && (
+                <div className="flex flex-wrap items-center gap-space-sm font-code-dense text-code-dense text-on-surface-variant">
+                  {health.lastLatencyMs !== null && <span>{health.lastLatencyMs}ms latency</span>}
+                  {health.lastCheckedAt && <span>Checked {formatDateTime(health.lastCheckedAt)}</span>}
+                  {health.lastErrorCategory && <span className="text-error">{titleCase(health.lastErrorCategory)}</span>}
+                </div>
+              )}
+            </div>
+          </div>
           {credential ? (
             <>
               <div className="flex flex-col gap-space-xs">

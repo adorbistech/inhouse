@@ -1,4 +1,12 @@
-import type { CapabilityRow, ModelRow, VendorAccountRow, VendorRow, WorkloadRow } from "../repositories/types.js";
+import type {
+  CapabilityRow,
+  ModelRow,
+  VendorAccountHealthEventRow,
+  VendorAccountHealthRow,
+  VendorAccountRow,
+  VendorRow,
+  WorkloadRow,
+} from "../repositories/types.js";
 import type { ModelDetail } from "../services/modelService.js";
 import type { VendorDetail } from "../services/vendorService.js";
 
@@ -100,5 +108,52 @@ export function toModelDetailResponse(detail: ModelDetail) {
     ...toModelResponse(detail),
     capabilities: detail.capabilities.map(toCapabilityResponse),
     workloads: detail.workloads.map(toWorkloadResponse),
+  };
+}
+
+/**
+ * `null` means "unknown" — this account has never been observed (see
+ * `services/providerHealthService.ts`). Never includes a raw provider
+ * error body; only `safeErrorCode`/`errorCategory`, both normalized,
+ * technical, and provider-agnostic.
+ */
+export function toProviderHealthResponse(vendorAccountId: string, health: VendorAccountHealthRow | null) {
+  if (!health) {
+    return {
+      vendorAccountId,
+      status: "unknown" as const,
+      consecutiveFailures: 0,
+      lastCheckedAt: null,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      lastLatencyMs: null,
+      lastErrorCategory: null,
+      lastSafeErrorCode: null,
+    };
+  }
+  return {
+    vendorAccountId: health.vendor_account_id,
+    status: health.status,
+    consecutiveFailures: health.consecutive_failures,
+    lastCheckedAt: health.last_checked_at,
+    lastSuccessAt: health.last_success_at,
+    lastFailureAt: health.last_failure_at,
+    lastLatencyMs: health.last_latency_ms,
+    lastErrorCategory: health.last_error_category,
+    lastSafeErrorCode: health.last_safe_error_code,
+  };
+}
+
+export function toProviderHealthEventResponse(event: VendorAccountHealthEventRow) {
+  return {
+    id: event.id,
+    vendorAccountId: event.vendor_account_id,
+    status: event.status,
+    latencyMs: event.latency_ms,
+    errorCategory: event.error_category,
+    safeErrorCode: event.safe_error_code,
+    source: event.source,
+    checkedAt: event.checked_at,
+    createdAt: event.created_at,
   };
 }

@@ -27,6 +27,8 @@ vi.mock("../lib/api", async (importOriginal) => {
       deleteCredential: vi.fn(),
       listCapabilities: vi.fn(),
       listWorkloads: vi.fn(),
+      getAccountHealth: vi.fn(),
+      getAccountHealthEvents: vi.fn(),
     },
   };
 });
@@ -71,6 +73,20 @@ beforeEach(() => {
   vi.mocked(api.listCapabilities).mockResolvedValue({ capabilities: [] });
   vi.mocked(api.listWorkloads).mockResolvedValue({ workloads: [] });
   vi.mocked(api.listCredentials).mockResolvedValue({ credentials: [] });
+  vi.mocked(api.getAccountHealth).mockResolvedValue({
+    health: {
+      vendorAccountId: "acct_1",
+      status: "unknown",
+      consecutiveFailures: 0,
+      lastCheckedAt: null,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      lastLatencyMs: null,
+      lastErrorCategory: null,
+      lastSafeErrorCode: null,
+    },
+  });
+  vi.mocked(api.getAccountHealthEvents).mockResolvedValue({ events: [] });
 });
 
 describe("Vendors page", () => {
@@ -372,5 +388,108 @@ describe("Vendors page — Credential Vault (Block 08)", () => {
     await userEvent.click(screen.getByRole("button", { name: /^save credential$/i }));
 
     expect(await screen.findByText(/exactly one of "secret" or "secretref" must be provided/i)).toBeInTheDocument();
+  });
+});
+
+describe("Vendors page — Provider Health (Block 09)", () => {
+  const primaryAccount = {
+    id: "acct_1",
+    vendorId: "vnd_1",
+    slug: "primary",
+    displayName: "Primary Account",
+    status: "enabled" as const,
+    externalAccountRef: null,
+    createdAt: "2026-09-19T00:00:00Z",
+    updatedAt: "2026-09-19T00:00:00Z",
+  };
+
+  async function renderWithAccount() {
+    const vendor = sampleVendor();
+    const detail = toDetail(vendor, { accounts: [primaryAccount] });
+    vi.mocked(api.listVendors).mockResolvedValue({ vendors: [vendor] });
+    vi.mocked(api.getVendor).mockResolvedValue({ vendor: detail });
+    render(<Vendors />);
+    await screen.findByText("Test Vendor");
+    await userEvent.click(screen.getByRole("button", { name: /credential/i }));
+    return vendor;
+  }
+
+  test("shows 'Unknown — Not Checked' when an account has never been observed", async () => {
+    await renderWithAccount();
+    expect(await screen.findByText(/unknown — not checked/i)).toBeInTheDocument();
+  });
+
+  test("displays a healthy account's status, latency, and last-checked time", async () => {
+    vi.mocked(api.getAccountHealth).mockResolvedValue({
+      health: {
+        vendorAccountId: "acct_1",
+        status: "healthy",
+        consecutiveFailures: 0,
+        lastCheckedAt: "2026-09-19T12:00:00.000Z",
+        lastSuccessAt: "2026-09-19T12:00:00.000Z",
+        lastFailureAt: null,
+        lastLatencyMs: 180,
+        lastErrorCategory: null,
+        lastSafeErrorCode: null,
+      },
+    });
+
+    await renderWithAccount();
+
+    expect(await screen.findByText("Healthy")).toBeInTheDocument();
+    expect(screen.getByText("180ms latency")).toBeInTheDocument();
+  });
+
+  test("displays an unhealthy account's safe error category without any raw error/credential detail", async () => {
+    vi.mocked(api.getAccountHealth).mockResolvedValue({
+      health: {
+        vendorAccountId: "acct_1",
+        status: "unhealthy",
+        consecutiveFailures: 4,
+        lastCheckedAt: "2026-09-19T12:00:00.000Z",
+        lastSuccessAt: null,
+        lastFailureAt: "2026-09-19T12:00:00.000Z",
+        lastLatencyMs: null,
+        lastErrorCategory: "authentication",
+        lastSafeErrorCode: "401",
+      },
+    });
+
+    await renderWithAccount();
+
+    expect(await screen.findByText("Unhealthy")).toBeInTheDocument();
+    expect(screen.getByText("Authentication")).toBeInTheDocument();
+    // Never a raw provider error body, an API key, or a secret of any kind.
+    const body = document.body.textContent ?? "";
+    expect(body).not.toMatch(/sk-[a-zA-Z0-9]/);
+    expect(body.toLowerCase()).not.toContain("bearer ");
+  });
+
+  test("degraded status renders distinctly from healthy and unhealthy", async () => {
+    vi.mocked(api.getAccountHealth).mockResolvedValue({
+      health: {
+        vendorAccountId: "acct_1",
+        status: "degraded",
+        consecutiveFailures: 0,
+        lastCheckedAt: "2026-09-19T12:00:00.000Z",
+        lastSuccessAt: "2026-09-19T12:00:00.000Z",
+        lastFailureAt: null,
+        lastLatencyMs: 4200,
+        lastErrorCategory: "rate_limit",
+        lastSafeErrorCode: "429",
+      },
+    });
+
+    await renderWithAccount();
+
+    expect(await screen.findByText("Degraded")).toBeInTheDocument();
+  });
+
+  test("a failed health fetch does not crash the page and falls back to an unknown display", async () => {
+    vi.mocked(api.getAccountHealth).mockRejectedValue(new Error("network error"));
+
+    await renderWithAccount();
+
+    expect(await screen.findByText(/unknown — not checked/i)).toBeInTheDocument();
   });
 });

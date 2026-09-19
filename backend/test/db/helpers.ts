@@ -144,8 +144,8 @@ export async function truncateAll(db: Queryable, schema: string): Promise<void> 
     TRUNCATE TABLE
       audit_events, usage_ledger, inhouse_api_keys, routing_fallback_rules,
       routing_tiers, vendor_workloads, vendor_capabilities, model_workloads,
-      workloads, model_capabilities, capabilities, models, vendor_credentials,
-      vendor_accounts, vendors
+      workloads, model_capabilities, capabilities, models, vendor_account_health_events,
+      vendor_account_health, vendor_credentials, vendor_accounts, vendors
     RESTART IDENTITY CASCADE
   `);
 }

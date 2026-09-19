@@ -1,4 +1,4 @@
-# Inhouse API (Block 04 — Foundation, persistence added in Block 05, Vendor System added in Block 06, Model Catalog added in Block 07, Credential Vault added in Block 08)
+# Inhouse API (Block 04 — Foundation, persistence added in Block 05, Vendor System added in Block 06, Model Catalog added in Block 07, Credential Vault added in Block 08, Provider Account Health Foundation added in Block 09)
 
 ## Status
 
@@ -11,27 +11,33 @@ Block 05 added a PostgreSQL persistence layer (SQL migrations, a
 dedicated Inhouse schema, and typed repositories — see
 `docs/DATABASE.md`); at that point no HTTP route used it yet. **Block 06
 changed that for one domain: the Vendor System. Block 07 added a second:
-the Model Catalog. Block 08 extends the Vendor System's credential
-endpoints with a real, INHOUSE-managed secret vault** (see "Credential
-Vault (Block 08)" below and `docs/CREDENTIAL_VAULT.md`). The distinction
-that matters going forward:
+the Model Catalog. Block 08 extended the Vendor System's credential
+endpoints with a real, INHOUSE-managed secret vault. Block 09 adds
+provider-account health observation** — a read-only view of whether a
+vendor account's connection is working, with the interface boundary a
+future real provider adapter will fill in (see "Vendor Account Health
+(Block 09)" below and `docs/PROVIDER_HEALTH.md`). The distinction that
+matters going forward:
 
 - **Persistence exists and is now reachable over HTTP** for vendors,
   vendor accounts, vendor credentials (now optionally INHOUSE-vault-managed
-  — see below), models, capabilities, and workloads (see "Vendor System"
-  and "Model Catalog" below) — real reads/writes through the
-  Block 05/06/07/08 schema and repositories.
+  — see below), vendor account health, models, capabilities, and
+  workloads (see "Vendor System" and "Model Catalog" below) — real
+  reads/writes through the Block 05/06/07/08/09 schema and repositories.
 - **`/health` and `/ready` (and their `/v1` equivalents) remain
   database-free by design** — they never depend on the database, so they
   stay reliable as liveness/readiness probes regardless of the database's
-  state. This did not change in Block 06, 07, or 08.
+  state. This did not change in Block 06, 07, 08, or 09.
 - **No route executes a provider call, routing decision, or model
   execution.** The Vendor System and Model Catalog persist *configuration*
   (including routing-adjacent fields like priority and retry conditions,
   and which capabilities/workloads a model supports) — nothing reads that
   configuration to actually route or execute a request yet. Block 08 does
   not decrypt a credential from any route, either — see "Credential Vault
-  (Block 08)".
+  (Block 08)". **Block 09 makes zero network calls of any kind** — every
+  health row in this block is created by a test or an operator calling
+  `ProviderHealthService` directly, never by actually checking a
+  provider. See `docs/PROVIDER_HEALTH.md`.
 - **No route implements authentication.** Every endpoint below, including
   the Vendor System and Model Catalog, is unauthenticated in this block
   (see "Authentication"). Block 08's vault protects *provider* credentials
@@ -142,6 +148,33 @@ enforced by request validation, not a database constraint (see
 A vendor may have multiple accounts; nothing in this API assumes a fixed
 `accounts[0]` — every account has its own id, slug, and status.
 
+### Vendor Account Health (Block 09)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/v1/vendors/:id/accounts/:accountId/health` | Current health snapshot |
+| `GET` | `/v1/vendors/:id/accounts/:accountId/health/events` | Recent observation history, most recent first. Optional `?limit=` (default 50, max 200) |
+
+Read-only in this block, deliberately: there is no write endpoint.
+`status` is one of `healthy` / `degraded` / `unhealthy` / `unknown` —
+`unknown` means this account has never been observed (no row exists
+yet), not a stored value. Recording an observation
+(`ProviderHealthService.recordObservation`, `services/providerHealthService.ts`)
+is reserved for a future, trusted provider adapter to call directly;
+exposing it over HTTP today would let any caller fabricate an account's
+health with no real check behind it. See `docs/PROVIDER_HEALTH.md` for
+the full model, including the `ProviderAdapter` interface a later block
+will implement.
+
+The health response never includes a credential, a provider response
+body, or anything beyond normalized fields (`status`,
+`consecutiveFailures`, `lastCheckedAt`, `lastSuccessAt`, `lastFailureAt`,
+`lastLatencyMs`, `lastErrorCategory`, `lastSafeErrorCode`).
+`lastErrorCategory` is one of a fixed, provider-agnostic set
+(`authentication`, `authorization`, `rate_limit`, `timeout`, `network`,
+`provider_error`, `configuration`, `unknown`) — never a raw provider
+error message.
+
 ### Vendor Credentials — Credential Vault (Block 08)
 
 | Method | Path | Notes |
@@ -222,6 +255,12 @@ are recorded to `audit_events` (`vendor.created`, `vendor.updated`,
 `vendor_credential.disabled`, `vendor_credential.deleted`). Audit
 metadata never includes a secret value, ciphertext, an encryption key, or
 a `secretRef`.
+
+**Vendor account health observations are deliberately not audit events**
+(Block 09) — `audit_events` is for administrative actions; a health
+observation is frequent operational telemetry, and
+`vendor_account_health_events` (see `docs/DATABASE.md`) is already that
+history. See `docs/PROVIDER_HEALTH.md`.
 
 ## Model Catalog (Block 07)
 

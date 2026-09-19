@@ -163,3 +163,44 @@ export interface ModelListFilters {
   limit?: number;
   offset?: number;
 }
+
+/** Block 09 — never `"unknown"` when stored; that's the absence of a row. */
+export type ProviderHealthStatus = "healthy" | "degraded" | "unhealthy" | "unknown";
+
+export type ProviderErrorCategory =
+  | "authentication"
+  | "authorization"
+  | "rate_limit"
+  | "timeout"
+  | "network"
+  | "provider_error"
+  | "configuration"
+  | "unknown";
+
+/**
+ * Never includes credentials, ciphertext, or a raw provider response —
+ * only normalized, safe fields. See docs/PROVIDER_HEALTH.md.
+ */
+export interface ProviderHealthApi {
+  vendorAccountId: string;
+  status: ProviderHealthStatus;
+  consecutiveFailures: number;
+  lastCheckedAt: string | null;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastLatencyMs: number | null;
+  lastErrorCategory: ProviderErrorCategory | null;
+  lastSafeErrorCode: string | null;
+}
+
+export interface ProviderHealthEventApi {
+  id: string;
+  vendorAccountId: string;
+  status: Exclude<ProviderHealthStatus, "unknown">;
+  latencyMs: number | null;
+  errorCategory: ProviderErrorCategory | null;
+  safeErrorCode: string | null;
+  source: "manual" | "adapter";
+  checkedAt: string;
+  createdAt: string;
+}

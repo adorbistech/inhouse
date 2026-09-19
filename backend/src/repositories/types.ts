@@ -60,6 +60,46 @@ export interface VendorAccountRow {
 export type NewVendorAccount = Omit<VendorAccountRow, "id" | "created_at" | "updated_at">;
 
 /**
+ * Observed operational health for a vendor account (Block 09) — distinct
+ * from `VendorAccountRow.status`, which is operator intent, not an
+ * observed fact. `status` here is one of `HealthStatus` (never `"unknown"`
+ * — the absence of a row *is* "unknown", see `services/providerHealthService.ts`).
+ * No raw provider error body or request/response data is ever stored here
+ * — see docs/PROVIDER_HEALTH.md.
+ */
+export interface VendorAccountHealthRow {
+  id: string;
+  vendor_account_id: string;
+  status: string;
+  consecutive_failures: number;
+  last_checked_at: Date;
+  last_success_at: Date | null;
+  last_failure_at: Date | null;
+  last_latency_ms: number | null;
+  last_error_category: string | null;
+  last_safe_error_code: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type NewVendorAccountHealth = Omit<VendorAccountHealthRow, "id" | "created_at" | "updated_at">;
+
+/** Append-only observation history backing `vendor_account_health`. */
+export interface VendorAccountHealthEventRow {
+  id: string;
+  vendor_account_id: string;
+  status: string;
+  latency_ms: number | null;
+  error_category: string | null;
+  safe_error_code: string | null;
+  source: string;
+  checked_at: Date;
+  created_at: Date;
+}
+
+export type NewVendorAccountHealthEvent = Omit<VendorAccountHealthEventRow, "id" | "created_at">;
+
+/**
  * A credential uses exactly one secret storage mode (enforced by a DB
  * CHECK constraint, migration 0011 — see docs/CREDENTIAL_VAULT.md):
  *
