@@ -30,10 +30,22 @@ services:
       INHOUSE_API_PORT: ${INHOUSE_API_PORT:-8092}
       INHOUSE_API_LOG_LEVEL: ${INHOUSE_API_LOG_LEVEL:-info}
       INHOUSE_API_CORS_ORIGINS: ${INHOUSE_API_CORS_ORIGINS:-}
+      INHOUSE_DB_HOST: inhouse-postgres
+      INHOUSE_DB_PORT: 5432
+      INHOUSE_DB_NAME: ${INHOUSE_DB_NAME:-inhouse}
+      INHOUSE_DB_USER: ${INHOUSE_DB_USER:-inhouse_app}
+      INHOUSE_DB_PASSWORD: ${INHOUSE_DB_PASSWORD}
+      INHOUSE_DB_SCHEMA: ${INHOUSE_DB_SCHEMA:-inhouse}
+      INHOUSE_DB_POOL_MIN: ${INHOUSE_DB_POOL_MIN:-2}
+      INHOUSE_DB_POOL_MAX: ${INHOUSE_DB_POOL_MAX:-10}
+      INHOUSE_DB_SSL: ${INHOUSE_DB_SSL:-false}
     ports:
       - "127.0.0.1:${INHOUSE_API_PORT:-8092}:${INHOUSE_API_PORT:-8092}"
     networks:
       - inhouse-net
+    depends_on:
+      inhouse-postgres:
+        condition: service_healthy
     healthcheck:
       test:
         - "CMD"
@@ -45,7 +57,36 @@ services:
       retries: 3
       start_period: 5s
 
+  # Dedicated Inhouse persistence store. Not published to the host: the API
+  # container reaches it over the inhouse-net Docker network by service
+  # name (`inhouse-postgres`), avoiding any host port collision with
+  # existing PostgreSQL instances (e.g. the host service on 5432 or the
+  # unrelated adorbis-core-test-postgres container on 5433 — neither is
+  # touched by, or related to, this service). See docs/DATABASE.md.
+  inhouse-postgres:
+    image: postgres:16-alpine
+    container_name: inhouse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${INHOUSE_DB_NAME:-inhouse}
+      POSTGRES_USER: ${INHOUSE_DB_USER:-inhouse_app}
+      POSTGRES_PASSWORD: ${INHOUSE_DB_PASSWORD}
+    volumes:
+      - inhouse-postgres-data:/var/lib/postgresql/data
+    networks:
+      - inhouse-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${INHOUSE_DB_USER:-inhouse_app} -d ${INHOUSE_DB_NAME:-inhouse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
 networks:
   inhouse-net:
     name: inhouse-net
     driver: bridge
+
+volumes:
+  inhouse-postgres-data:
+    name: inhouse-postgres-data

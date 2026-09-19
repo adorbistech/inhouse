@@ -1,0 +1,170 @@
+export interface VendorRow {
+  id: string;
+  slug: string;
+  display_name: string;
+  vendor_type: string;
+  protocol: string;
+  base_endpoint: string;
+  description: string | null;
+  status: string;
+  billing_type: string;
+  default_tier: number | null;
+  max_tier: number | null;
+  automatic_fallback: boolean;
+  timeout_ms: number | null;
+  retry_max_attempts: number | null;
+  retry_backoff_ms: number | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type NewVendor = Omit<VendorRow, "id" | "created_at" | "updated_at">;
+
+export interface VendorAccountRow {
+  id: string;
+  vendor_id: string;
+  slug: string;
+  display_name: string;
+  status: string;
+  external_account_ref: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type NewVendorAccount = Omit<VendorAccountRow, "id" | "created_at" | "updated_at">;
+
+export interface VendorCredentialRow {
+  id: string;
+  vendor_account_id: string;
+  credential_type: string;
+  secret_ref: string;
+  status: string;
+  created_at: Date;
+  updated_at: Date;
+  last_tested_at: Date | null;
+  last_successful_at: Date | null;
+}
+
+export type NewVendorCredential = Omit<
+  VendorCredentialRow,
+  "id" | "created_at" | "updated_at" | "last_tested_at" | "last_successful_at"
+>;
+
+export interface ModelRow {
+  id: string;
+  vendor_id: string;
+  provider_model_id: string;
+  inhouse_alias: string;
+  display_name: string;
+  context_window: number | null;
+  status: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type NewModel = Omit<ModelRow, "id" | "created_at" | "updated_at">;
+
+export interface CapabilityRow {
+  id: string;
+  slug: string;
+  display_name: string;
+  description: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type NewCapability = Omit<CapabilityRow, "id" | "created_at" | "updated_at">;
+
+export interface WorkloadRow {
+  id: string;
+  slug: string;
+  display_name: string;
+  description: string | null;
+  status: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type NewWorkload = Omit<WorkloadRow, "id" | "created_at" | "updated_at">;
+
+export interface RoutingTierRow {
+  id: string;
+  workload_id: string;
+  tier_number: number;
+  vendor_id: string;
+  model_id: string;
+  priority: number;
+  enabled: boolean;
+  timeout_override_ms: number | null;
+  max_attempts: number | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type NewRoutingTier = Omit<RoutingTierRow, "id" | "created_at" | "updated_at">;
+
+export interface RoutingFallbackRuleRow {
+  id: string;
+  workload_id: string;
+  from_tier_id: string;
+  to_tier_id: string;
+  condition_type: string;
+  condition_config: Record<string, unknown>;
+  priority: number;
+  enabled: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type NewRoutingFallbackRule = Omit<RoutingFallbackRuleRow, "id" | "created_at" | "updated_at">;
+
+export interface InhouseApiKeyRow {
+  id: string;
+  key_id: string;
+  name: string;
+  key_hash: string;
+  permissions: unknown[];
+  status: string;
+  created_at: Date;
+  last_used_at: Date | null;
+  expires_at: Date | null;
+}
+
+export type NewInhouseApiKey = Omit<InhouseApiKeyRow, "id" | "created_at" | "last_used_at">;
+
+export interface UsageLedgerRow {
+  id: string;
+  inhouse_api_key_id: string | null;
+  vendor_id: string | null;
+  vendor_account_id: string | null;
+  model_id: string | null;
+  workload_id: string | null;
+  primary_tier_id: string | null;
+  fallback_tier_id: string | null;
+  is_fallback: boolean;
+  status: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  latency_ms: number | null;
+  error_category: string | null;
+  provider_cost: string | null;
+  inhouse_cost: string | null;
+  currency: string | null;
+  created_at: Date;
+}
+
+export type NewUsageLedgerEntry = Omit<UsageLedgerRow, "id" | "created_at">;
+
+export interface AuditEventRow {
+  id: string;
+  actor_id: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  metadata: Record<string, unknown>;
+  request_id: string | null;
+  created_at: Date;
+}
+
+export type NewAuditEvent = Omit<AuditEventRow, "id" | "created_at">;

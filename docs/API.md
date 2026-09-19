@@ -1,19 +1,37 @@
-# Inhouse API (Block 04 — Foundation)
+# Inhouse API (Block 04 — Foundation, persistence added in Block 05)
 
 ## Status
 
 This is the backend/API **boundary foundation** only. No authentication,
-vendors, models, routing, provider adapters, telemetry, accounting, or
-database exists yet. Those are later blocks. `/root/adorbis-api` is a
-separate, external service — Inhouse does not call it yet and this
-document does not cover it.
+vendors, models, routing, provider adapters, telemetry, or accounting
+exists yet. Those are later blocks. `/root/adorbis-api` is a separate,
+external service — Inhouse does not call it yet and this document does
+not cover it.
+
+Block 05 added a PostgreSQL persistence layer to the repository (SQL
+migrations, a dedicated Inhouse schema, and typed repositories — see
+`docs/DATABASE.md`). **No current HTTP route in this API uses it yet.**
+The distinction matters:
+
+- **Persistence exists** as a foundation: migrations, schema, and
+  repositories are real and tested, independent of this HTTP layer.
+- **This API's routes remain database-free in practice** — the health and
+  readiness endpoints below never depend on the database (by design, so
+  they stay reliable as liveness/readiness probes), and no route performs
+  database-backed CRUD. No pool is even opened when the API process
+  starts.
+- Database-backed API functionality (routes that read or write through
+  the repositories) is explicitly out of scope until a later block wires
+  it up.
 
 ## Service Purpose
 
-`inhouse-api` is the Inhouse product's own backend. It is provider-neutral
-and database-free at this stage: it exists to establish the API contract
-(versioning, health/readiness, error shape, request correlation, logging,
-and baseline security headers/CORS) that later blocks build on.
+`inhouse-api` is the Inhouse product's own backend. Its HTTP surface is
+provider-neutral and, at this stage, database-free in practice: it exists
+to establish the API contract (versioning, health/readiness, error shape,
+request correlation, logging, and baseline security headers/CORS) that
+later blocks build on. The Block 05 persistence layer lives alongside
+this service in the same repository but is not yet called from any route.
 
 ## Base URL Concept
 

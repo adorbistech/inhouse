@@ -1,10 +1,10 @@
-# Inhouse — Deployment Foundation (Block 03, extended in Block 04)
+# Inhouse — Deployment Foundation (Block 03, extended in Block 04 and Block 05)
 
 ## Status
 
-Frontend and backend/API deployment foundations exist. No database or
-worker exists yet. See `docs/API.md` for the backend's API contract. This
-document will grow as later blocks add those pieces.
+Frontend, backend/API, and database deployment foundations exist. See
+`docs/API.md` for the backend's API contract and `docs/DATABASE.md` for
+the persistence foundation added in Block 05.
 
 ## VPS Discovery (read-only, recorded at time of Block 03 Prompt 1)
 
@@ -178,6 +178,32 @@ configuration variables are documented in full in `docs/API.md`.
   list were identical before and after the test. `docker compose down`
   then removed `inhouse-api` and `inhouse-net` cleanly.
 
+## Database (Block 05)
+
+- Docker Compose gained a third service: `inhouse-postgres` (image
+  `postgres:16-alpine`), on the same `inhouse-net` network, with a
+  dedicated named volume (`inhouse-postgres-data`) and a `pg_isready`
+  healthcheck. **No host port is published** — `inhouse-api` reaches it
+  only via Docker DNS (`inhouse-postgres:5432`). `inhouse-api` now
+  `depends_on: inhouse-postgres` with `condition: service_healthy`.
+- Full detail (schema, migrations, isolation rationale, repositories,
+  credential/API-key hashing boundaries, test database isolation) is in
+  `docs/DATABASE.md`.
+- **Verified:** `docker compose build inhouse-api` succeeded with the new
+  `pg` dependency bundled; an isolated `docker compose up -d
+  inhouse-postgres inhouse-api` (temporary env file, never committed)
+  brought both containers to `healthy`; `GET /health`, `/v1/health`,
+  `/ready` still returned the unchanged Block 04 payloads; the compiled
+  `dist/db/migrate.js` (run via a throwaway `node:22-alpine` container
+  attached to `inhouse-net`, no source or dev tooling needed) applied all
+  9 migrations against `inhouse-postgres` and reported them repeat-safe on
+  a second run. `docker compose down` then removed `inhouse-api`,
+  `inhouse-postgres`, and `inhouse-net`; the test-created
+  `inhouse-postgres-data` volume was removed manually afterward, since
+  `compose down` does not remove named volumes by default. PM2 restart
+  counts (`adorbis-api`: 12, `timespace`: 1) and the existing Docker
+  container list were identical before and after.
+
 ## Security Verification
 
 - `.env`, `*.pem`, `*.key`, `secrets/`, `credentials/`, `node_modules/`,
@@ -196,6 +222,14 @@ configuration variables are documented in full in `docs/API.md`.
   passwords, tokens, or database credentials found anywhere under
   `backend/`. No provider SDK dependency was added (Fastify + its own
   `@fastify/cors`/`@fastify/helmet` plugins only).
+- Backend secret scan (Block 05): no plaintext database password, API key,
+  or vendor secret found anywhere under `backend/src` or `backend/test`.
+  `INHOUSE_DB_PASSWORD` has no default anywhere in source — a missing
+  value fails startup. `.env.example` only gained placeholder-style
+  entries (no real host, credential, or value). The disposable test
+  database's password (`backend/scripts/testDb.ts`) is a fixed,
+  clearly-labeled non-secret string scoped to a container that only ever
+  exists on loopback for the duration of `npm run test:db`.
 
 ## Isolation Verification
 
@@ -207,7 +241,14 @@ configuration variables are documented in full in `docs/API.md`.
 - No existing Docker container, image, network, or volume was modified or
   removed.
 - No existing service was started, stopped, or restarted, except temporary,
-  isolated tests of the new `inhouse-frontend` (Block 03) and `inhouse-api`
-  (Block 04) containers themselves — each built, health-checked, then
-  stopped and removed along with the dedicated `inhouse-net` network (see
-  the Prompt 1 test logs in each block's section above).
+  isolated tests of the new `inhouse-frontend` (Block 03), `inhouse-api`
+  (Block 04), and `inhouse-postgres`/`inhouse-postgres-test` (Block 05)
+  containers themselves — each built, health-checked, then stopped and
+  removed along with the dedicated `inhouse-net` network (see the Prompt 1
+  test logs in each block's section above).
+- Block 05's DB-backed test suite (`npm run test:db`) never connects to
+  the host's PostgreSQL or to `adorbis-core-test-postgres` — it only ever
+  talks to a disposable `inhouse-postgres-test` container on a
+  Docker-assigned, loopback-only port, torn down by `npm run test:db:stop`
+  (verified: no `inhouse-*` container, network, or volume remained after
+  the test run completed).

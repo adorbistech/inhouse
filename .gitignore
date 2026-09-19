@@ -23,3 +23,6 @@ build/
 # OS / editor
 .DS_Store
 *.swp
+
+# Disposable test database connection info (Block 05)
+backend/.test-db.json

@@ -1,0 +1,229 @@
+# Inhouse Database (Block 05 — Persistence Foundation)
+
+## Status
+
+This block establishes **persistence only**. It does not implement:
+
+- provider integrations
+- a provider credential vault
+- model execution
+- a routing engine
+- API authentication
+- Claude Code integration
+- accounting/cost calculations
+
+Those are later blocks. This document covers the database layer that they
+will build on: an isolated Postgres service, SQL migrations, schema, and
+typed repositories.
+
+## Database Isolation
+
+Inhouse uses its **own dedicated PostgreSQL Docker service** — never the
+host's PostgreSQL, and never any other existing container:
+
+- Service/container name: `inhouse-postgres` (image `postgres:16-alpine`)
+- Network: `inhouse-net` (the same dedicated network `inhouse-frontend` and
+  `inhouse-api` already use)
+- Named volume: `inhouse-postgres-data`
+- **No host port is published.** `inhouse-api` reaches the database only
+  over `inhouse-net` via Docker DNS, using the service name
+  `inhouse-postgres` as the host.
+
+This was a deliberate choice over reusing either PostgreSQL instance
+already listening on the host (`127.0.0.1:5432`, the host's own PostgreSQL
+service, and `127.0.0.1:5433`, `adorbis-core-test-postgres`, an unrelated
+existing Docker container). Neither was inspected, connected to, or
+assumed to be related to Inhouse. Not publishing a host port at all removes
+any possibility of colliding with those, or any future host service, by
+construction — there's no port number to pick.
+
+For local development or debugging outside Docker (e.g. a DB GUI), a
+developer can temporarily publish a port to their own compose override —
+this repository does not do so by default.
+
+## Configuration
+
+All values are environment-driven (`backend/src/db/config.ts`,
+`loadDbConfig`). No default is provided for the password — a missing
+`INHOUSE_DB_PASSWORD` fails startup immediately rather than falling back to
+a guessable value.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `INHOUSE_DB_HOST` | `inhouse-postgres` | DB host (the Compose service name) |
+| `INHOUSE_DB_PORT` | `5432` | DB port |
+| `INHOUSE_DB_NAME` | `inhouse` | Database name |
+| `INHOUSE_DB_USER` | `inhouse_app` | Database user |
+| `INHOUSE_DB_PASSWORD` | *(none — required)* | Database password |
+| `INHOUSE_DB_SCHEMA` | `inhouse` | Dedicated schema/namespace (see below) |
+| `INHOUSE_DB_POOL_MIN` | `2` | Minimum pool connections |
+| `INHOUSE_DB_POOL_MAX` | `10` | Maximum pool connections |
+| `INHOUSE_DB_SSL` | `false` | Require TLS when connecting |
+
+See the repository root `.env.example` — placeholders only, no real values.
+
+## Schema / Namespace
+
+All Inhouse tables live in a dedicated Postgres **schema** (default name
+`inhouse`, configurable via `INHOUSE_DB_SCHEMA`), not `public`. The pool
+(`src/db/client.ts`) pins `search_path` to `<schema>,public` at connection
+time, so repository code never has to schema-qualify table names, and the
+schema can be renamed via configuration without touching SQL.
+
+## Identifiers
+
+Every table uses a `UUID` primary key, generated with Postgres's built-in
+`gen_random_uuid()` (available natively since Postgres 13 — no `pgcrypto`
+extension needed, and the compose service pins `postgres:16-alpine`).
+UUIDs were chosen over serial integers so future distributed writers
+(multiple API instances, offline-generated records) never collide on ID
+assignment.
+
+## Migrations
+
+Location: `backend/src/db/migrations/*.sql`, numbered and applied in
+filename order (`0001_...`, `0002_...`, ...). The runner is
+`backend/src/db/migrate.ts`.
+
+- **Tracking table:** `schema_migrations` (inside the Inhouse schema),
+  recording `name`, a SHA-256 `checksum` of the file's contents, and
+  `applied_at`.
+- **Repeat-safe:** re-running `db:migrate` when nothing is pending is a
+  no-op (`No pending migrations. N already applied.`).
+- **Checksum drift detection:** if an already-applied migration file's
+  contents change, the runner refuses to proceed — migrations are
+  immutable once applied; a change means writing a new migration, not
+  editing an old one.
+- **No silent failures:** each migration runs inside its own
+  `BEGIN`/`COMMIT`. On error, it rolls back, logs which file failed, and
+  stops before applying any later file — the CLI exits non-zero.
+- **Namespace:** the runner creates the Inhouse schema (`CREATE SCHEMA IF
+  NOT EXISTS`) if it doesn't exist yet, and the tracking table lives inside
+  that schema, not `public`.
+
+Commands (run from `backend/`):
+
+```
+npm run db:migrate          # apply pending migrations
+npm run db:migrate:status   # list applied/pending without changing anything
+```
+
+## Schema — Entities
+
+All tables include `created_at`/`updated_at` (UTC, `TIMESTAMPTZ`, default
+`now()`); tables with `updated_at` get an automatic trigger
+(`set_updated_at`) that refreshes it on every `UPDATE`.
+
+- **vendors** — vendor registry (slug, type, protocol, endpoint, billing,
+  tiering, retry/timeout defaults). No provider names are seeded.
+- **vendor_accounts** — one or more accounts per vendor.
+- **vendor_credentials** — credential *metadata only* (`secret_ref`,
+  status, last tested/successful). **Never a plaintext secret column.**
+  The actual vault/encryption mechanism is a later block; this table only
+  tracks lifecycle state for a credential that lives elsewhere.
+- **models** — provider model identifiers mapped to an Inhouse alias, per
+  vendor. No provider/model names are seeded.
+- **capabilities** / **model_capabilities** — generic capability tags,
+  joined to models many-to-many.
+- **workloads** / **model_workloads** — data-driven workload records,
+  joined to models many-to-many.
+- **routing_tiers** — data representation of a workload's tiers (vendor,
+  model, priority, timeout/attempt overrides). No routing logic.
+- **routing_fallback_rules** — configurable fallback conditions
+  (`condition_type` + `condition_config` JSONB) between two tiers. No
+  fallback engine evaluates these yet.
+- **inhouse_api_keys** — Inhouse-issued keys (never provider credentials).
+  Stores `key_hash` only — see "API Key Hashing" below. Authentication
+  itself is not implemented.
+- **usage_ledger** — per-execution record (tokens, latency, cost fields,
+  vendor/model/workload/tier references, error category). No pricing is
+  calculated or seeded here — later blocks write the computed values.
+- **audit_events** — actor/action/resource/metadata audit trail.
+  `metadata` is caller-supplied JSON and must never contain secrets —
+  that's a caller responsibility, not something the database enforces.
+
+Foreign keys, unique constraints, and indexes on FK columns and
+frequently-filtered columns (`status`, `created_at`) are defined directly
+in the migration SQL — see `backend/src/db/migrations/`.
+
+## Repositories
+
+`backend/src/repositories/` has one typed repository per entity group
+(`VendorsRepository`, `VendorAccountsRepository`,
+`VendorCredentialsRepository`, `ModelsRepository`, `CapabilitiesRepository`,
+`WorkloadsRepository`, `RoutingRepository`, `ApiKeysRepository`,
+`UsageLedgerRepository`, `AuditEventsRepository`).
+
+Rules:
+
+- Every query is parameterized (`$1`, `$2`, ...) — no string interpolation
+  of caller-controlled values, ever (see `test/db/repositories.test.ts`,
+  "parameterized queries" test, which asserts an injection-shaped value is
+  stored as inert data, not executed).
+- Repositories accept a `Queryable` (`src/db/client.ts`) — either a `Pool`
+  or a transaction's `PoolClient` — so callers can compose multi-step
+  writes atomically via `withTransaction()` without the repository knowing
+  about transactions.
+- Repositories have no dependency on Fastify. They are plain classes,
+  independent of the HTTP layer. No route handler exists yet that calls
+  them — that's later work (`No SQL in route handlers`, per
+  `docs/DEVELOPMENT_RULES.md`).
+
+## Credential Boundary
+
+`vendor_credentials.secret_ref` is a *reference* (e.g. a vault path or
+external ID) — the actual secret value is never written to this database
+in any column, table, or JSON blob. Building the vault/encryption
+mechanism itself is explicitly out of scope for this block.
+
+## API Key Hashing
+
+`backend/src/lib/apiKeyHash.ts` hashes a raw Inhouse-issued API key with
+SHA-256 before it's ever written to `inhouse_api_keys.key_hash`. The raw
+key is never persisted, logged, or returned by any repository method.
+SHA-256 (rather than a slow/salted password hash like bcrypt or scrypt) is
+appropriate specifically because the input is a high-entropy,
+server-generated random token, not a user-chosen password — there's no
+brute-force dictionary to slow down, and a deterministic hash allows a
+direct `key_hash` lookup. This block only builds the hashing boundary;
+issuing keys and authenticating requests with them is a later block.
+
+## Test Database Isolation
+
+DB-backed tests never touch the host's PostgreSQL, `inhouse-postgres`
+(the dev/prod service), or any other existing service. They use a fully
+disposable, Inhouse-only container:
+
+```
+npm run test:db:start   # starts `inhouse-postgres-test` (postgres:16-alpine),
+                         # a Docker-assigned random host port (127.0.0.1 only),
+                         # writes connection info to backend/.test-db.json
+                         # (git-ignored)
+npm run test:db          # start -> run test/db/**/*.test.ts serially -> stop
+npm run test:db:stop     # removes the container and the state file
+```
+
+`test/db/*.test.ts` run with `--test-concurrency=1`: several files share
+one disposable database and some (e.g. the migration tests) drop and
+recreate the schema, which is unsafe to run concurrently against a single
+Postgres instance. Regular `npm test` (no Docker required) is unaffected —
+it only runs `test/*.test.ts`, which includes plain config/unit tests for
+the DB config and the API key hash but never opens a real connection.
+
+## Backup Considerations
+
+Not addressed in this block beyond the named Docker volume
+(`inhouse-postgres-data`) persisting data across container
+restarts/recreations. A backup/restore strategy (e.g. `pg_dump` on a
+schedule) is deferred to a later block once there is real data worth
+protecting.
+
+## What This Block Does *Not* Implement
+
+- Provider integrations or a credential vault/encryption mechanism
+- Model execution or a routing engine
+- API authentication (issuing/validating `inhouse_api_keys`)
+- Claude Code integration
+- Cost/pricing calculation or any pricing seed data
+- HTTP CRUD routes over any of these tables
+- Seed data for any real vendor, model, or provider name
