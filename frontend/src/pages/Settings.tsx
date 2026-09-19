@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Icon } from "../components/ui/Icon";
 import { Button } from "../components/ui/Button";
 import { Chip } from "../components/ui/Chip";
 import { Panel, PanelHeader } from "../components/ui/Panel";
 import { Table } from "../components/ui/Table";
 import { Toggle } from "../components/ui/Toggle";
-import { FormField, Select } from "../components/ui/FormField";
+import { Drawer } from "../components/ui/Drawer";
+import { FormField, Select, TextInput } from "../components/ui/FormField";
 import { vendors, routingPolicy, inhouseApiKeys, auditLog } from "../data/mockData";
 import { formatRelative, formatTimeUtc, titleCase } from "../lib/format";
+import { api, ApiError } from "../lib/api";
+import type { CapabilityApi, CreateModelPayload, ModelApi, VendorApi, WorkloadApi } from "../types/api";
 
 const SETTINGS_TABS = [
   { key: "api", label: "API" },
@@ -270,32 +273,431 @@ function RoutingTab() {
   );
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return "An unexpected error occurred.";
+}
+
 function ModelsTab() {
-  const allModels = vendors.flatMap((v) => v.models.map((m) => ({ ...m, vendorName: v.name })));
+  const [models, setModels] = useState<ModelApi[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [realVendors, setRealVendors] = useState<VendorApi[]>([]);
+  const [capabilitiesCatalog, setCapabilitiesCatalog] = useState<CapabilityApi[]>([]);
+  const [workloadsCatalog, setWorkloadsCatalog] = useState<WorkloadApi[]>([]);
+  const [modelCapabilities, setModelCapabilities] = useState<Record<string, CapabilityApi[]>>({});
+
+  const [vendorFilter, setVendorFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | "enabled" | "disabled">("");
+  const [search, setSearch] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const refreshModels = useCallback(async () => {
+    try {
+      const { models: rows } = await api.listModels({
+        vendorId: vendorFilter || undefined,
+        status: statusFilter || undefined,
+        search: search || undefined,
+      });
+      setModels(rows);
+      setListError(null);
+
+      const detailEntries = await Promise.all(
+        rows.map(async (m) => {
+          try {
+            const { model } = await api.getModel(m.id);
+            return [m.id, model.capabilities] as const;
+          } catch {
+            return [m.id, []] as const;
+          }
+        }),
+      );
+      setModelCapabilities(Object.fromEntries(detailEntries));
+    } catch (error) {
+      setListError(errorMessage(error));
+    }
+  }, [vendorFilter, statusFilter, search]);
+
+  useEffect(() => {
+    refreshModels();
+  }, [refreshModels]);
+
+  useEffect(() => {
+    api
+      .listVendors()
+      .then(({ vendors: rows }) => setRealVendors(rows))
+      .catch(() => setRealVendors([]));
+    api
+      .listCapabilities()
+      .then(({ capabilities }) => setCapabilitiesCatalog(capabilities))
+      .catch(() => setCapabilitiesCatalog([]));
+    api
+      .listWorkloads()
+      .then(({ workloads }) => setWorkloadsCatalog(workloads))
+      .catch(() => setWorkloadsCatalog([]));
+  }, []);
+
+  const vendorNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const v of realVendors) map.set(v.id, v.displayName);
+    return map;
+  }, [realVendors]);
+
+  async function handleToggleStatus(model: ModelApi) {
+    setActionError(null);
+    try {
+      if (model.status === "enabled") {
+        await api.disableModel(model.id);
+      } else {
+        await api.enableModel(model.id);
+      }
+      await refreshModels();
+    } catch (error) {
+      setActionError(errorMessage(error));
+    }
+  }
+
+  async function handleAddModel(payload: CreateModelPayload) {
+    await api.createModel(payload);
+    await refreshModels();
+    setDrawerOpen(false);
+  }
+
+  if (listError) {
+    return (
+      <Panel className="mb-space-lg">
+        <div className="p-space-lg flex flex-col items-center gap-space-sm text-center">
+          <Icon name="error" className="text-error" size={28} />
+          <span className="font-headline-md text-headline-md font-bold text-on-surface">Failed to load models</span>
+          <p className="font-body-sm text-body-sm text-on-surface-variant max-w-md">{listError}</p>
+          <Button variant="secondary" onClick={() => refreshModels()}>
+            <Icon name="refresh" size={16} />
+            Retry
+          </Button>
+        </div>
+      </Panel>
+    );
+  }
+
+  if (models === null) {
+    return (
+      <Panel className="mb-space-lg">
+        <div className="p-space-lg flex flex-col items-center gap-space-sm text-center">
+          <Icon name="hourglass_top" className="text-primary animate-pulse" size={28} />
+          <span className="font-body-md text-body-md text-on-surface-variant">Loading models…</span>
+        </div>
+      </Panel>
+    );
+  }
+
   return (
-    <Panel className="mb-space-lg">
-      <PanelHeader title="Model Catalog" eyebrow={`${allModels.length} MODELS`} />
-      <Table
-        rowKey={(m) => m.id}
-        rows={allModels}
-        columns={[
-          { header: "Model", render: (m) => <span className="text-on-surface font-bold">{m.displayName}</span> },
-          { header: "Vendor", render: (m) => <span className="text-on-surface-variant">{m.vendorName}</span> },
-          { header: "Context", render: (m) => <span className="text-on-surface-variant">{(m.contextWindowTokens / 1000).toFixed(0)}K</span> },
-          {
-            header: "Capabilities",
-            render: (m) => (
-              <div className="flex flex-wrap gap-1">
-                {m.capabilities.map((c) => (
-                  <Chip key={c}>{titleCase(c)}</Chip>
-                ))}
-              </div>
-            ),
-          },
-          { header: "Status", render: (m) => <Chip tone={m.status === "healthy" ? "tertiary" : "secondary"}>{m.status}</Chip> },
-        ]}
+    <div className="flex flex-col gap-space-sm mb-space-lg">
+      {actionError && (
+        <div className="bg-error/10 border border-error text-error p-space-sm font-body-sm text-body-sm flex items-center justify-between gap-space-sm">
+          <span>{actionError}</span>
+          <button onClick={() => setActionError(null)} aria-label="Dismiss">
+            <Icon name="close" size={16} />
+          </button>
+        </div>
+      )}
+
+      <Panel>
+        <PanelHeader
+          title="Model Catalog"
+          eyebrow={`${models.length} MODELS`}
+          right={
+            <Button variant="primary" className="px-space-sm py-1" onClick={() => setDrawerOpen(true)}>
+              <Icon name="add" size={14} />
+              Add Model
+            </Button>
+          }
+        />
+        <div className="p-space-sm flex flex-wrap items-center gap-space-xs bg-surface-container-low">
+          <Select value={vendorFilter} onChange={(e) => setVendorFilter(e.target.value)} className="py-1">
+            <option value="">All Vendors</option>
+            {realVendors.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.displayName}
+              </option>
+            ))}
+          </Select>
+          <Select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as "" | "enabled" | "disabled")}
+            className="py-1"
+          >
+            <option value="">All Statuses</option>
+            <option value="enabled">Enabled</option>
+            <option value="disabled">Disabled</option>
+          </Select>
+          <TextInput
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search alias, display name, provider model id…"
+            className="flex-1 min-w-[200px] py-1"
+          />
+        </div>
+        {models.length === 0 ? (
+          <div className="p-space-lg text-center flex flex-col items-center gap-space-sm">
+            <Icon name="deployed_code" className="text-outline-variant" size={28} />
+            <span className="font-body-sm text-body-sm text-on-surface-variant">
+              No models match the current filters, or none are configured yet. Use "Add Model" to register the first
+              one.
+            </span>
+          </div>
+        ) : (
+          <Table
+            rowKey={(m) => m.id}
+            rows={models}
+            columns={[
+              { header: "Model", render: (m) => <span className="text-on-surface font-bold">{m.displayName}</span> },
+              {
+                header: "Vendor",
+                render: (m) => (
+                  <span className="text-on-surface-variant">{vendorNameById.get(m.vendorId) ?? m.vendorId}</span>
+                ),
+              },
+              {
+                header: "Provider Model ID",
+                render: (m) => <span className="font-code-dense text-code-dense text-on-surface-variant">{m.providerModelId}</span>,
+              },
+              {
+                header: "Inhouse Alias",
+                render: (m) => <span className="font-code-dense text-code-dense text-primary">{m.inhouseAlias}</span>,
+              },
+              {
+                header: "Context",
+                render: (m) => (
+                  <span className="text-on-surface-variant">
+                    {m.contextWindow ? `${(m.contextWindow / 1000).toFixed(0)}K` : "—"}
+                  </span>
+                ),
+              },
+              {
+                header: "Capabilities",
+                render: (m) => (
+                  <div className="flex flex-wrap gap-1">
+                    {(modelCapabilities[m.id] ?? []).map((c) => (
+                      <Chip key={c.id}>{titleCase(c.slug)}</Chip>
+                    ))}
+                  </div>
+                ),
+              },
+              {
+                header: "Status",
+                render: (m) => <Chip tone={m.status === "enabled" ? "tertiary" : "error"}>{m.status}</Chip>,
+              },
+              {
+                header: "Actions",
+                render: (m) => (
+                  <Button
+                    variant="secondary"
+                    className="px-space-sm py-1"
+                    onClick={() => handleToggleStatus(m)}
+                  >
+                    {m.status === "enabled" ? "Disable" : "Enable"}
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        )}
+      </Panel>
+
+      <AddModelDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        vendors={realVendors}
+        capabilitiesCatalog={capabilitiesCatalog}
+        workloadsCatalog={workloadsCatalog}
+        onSubmit={handleAddModel}
       />
-    </Panel>
+    </div>
+  );
+}
+
+function AddModelDrawer({
+  open,
+  onClose,
+  vendors: vendorOptions,
+  capabilitiesCatalog,
+  workloadsCatalog,
+  onSubmit,
+}: {
+  open: boolean;
+  onClose: () => void;
+  vendors: VendorApi[];
+  capabilitiesCatalog: CapabilityApi[];
+  workloadsCatalog: WorkloadApi[];
+  onSubmit: (payload: CreateModelPayload) => Promise<void>;
+}) {
+  const [vendorId, setVendorId] = useState("");
+  const [providerModelId, setProviderModelId] = useState("");
+  const [inhouseAlias, setInhouseAlias] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [contextWindow, setContextWindow] = useState<number | "">("");
+  const [status, setStatus] = useState<"enabled" | "disabled">("enabled");
+  const [capabilityIds, setCapabilityIds] = useState<Set<string>>(new Set());
+  const [workloadIds, setWorkloadIds] = useState<Set<string>>(new Set());
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  if (!open) return null;
+
+  function toggle(set: Set<string>, setSet: (s: Set<string>) => void, id: string) {
+    const next = new Set(set);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSet(next);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        vendorId,
+        providerModelId,
+        inhouseAlias,
+        displayName,
+        contextWindow: contextWindow === "" ? undefined : contextWindow,
+        status,
+        capabilityIds: Array.from(capabilityIds),
+        workloadIds: Array.from(workloadIds),
+      });
+      setVendorId("");
+      setProviderModelId("");
+      setInhouseAlias("");
+      setDisplayName("");
+      setContextWindow("");
+      setCapabilityIds(new Set());
+      setWorkloadIds(new Set());
+    } catch (error) {
+      setSubmitError(error instanceof ApiError ? error.message : "Failed to create model.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Drawer open={open} onClose={onClose} title="Add Model" subtitle="Register a model that belongs to an existing vendor.">
+      <form className="flex flex-col gap-space-lg" onSubmit={handleSubmit}>
+        {submitError && (
+          <div className="bg-error/10 border border-error text-error p-space-sm font-body-sm text-body-sm">
+            {submitError}
+          </div>
+        )}
+
+        <div className="flex flex-col gap-space-sm bg-surface-container-low p-space-md">
+          <FormField label="Vendor">
+            <Select value={vendorId} onChange={(e) => setVendorId(e.target.value)} required>
+              <option value="" disabled>
+                {vendorOptions.length === 0 ? "No vendors configured yet" : "Select a vendor…"}
+              </option>
+              {vendorOptions.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.displayName}
+                </option>
+              ))}
+            </Select>
+          </FormField>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-sm">
+            <FormField label="Provider Model ID">
+              <TextInput
+                value={providerModelId}
+                onChange={(e) => setProviderModelId(e.target.value)}
+                placeholder="the identifier the vendor understands"
+                required
+              />
+            </FormField>
+            <FormField label="Inhouse Alias">
+              <TextInput
+                value={inhouseAlias}
+                onChange={(e) => setInhouseAlias(e.target.value)}
+                placeholder="the stable identifier Inhouse exposes"
+                required
+              />
+            </FormField>
+            <FormField label="Display Name">
+              <TextInput value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
+            </FormField>
+            <FormField label="Context Window (tokens)">
+              <TextInput
+                type="number"
+                min={0}
+                value={contextWindow}
+                onChange={(e) => setContextWindow(e.target.value === "" ? "" : Number(e.target.value))}
+              />
+            </FormField>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-space-sm bg-surface-container-low p-space-md">
+          <span className="font-label-md text-label-md text-primary uppercase">Capabilities</span>
+          {capabilitiesCatalog.length === 0 ? (
+            <div className="bg-surface p-space-sm font-body-sm text-body-sm text-on-surface-variant text-center">
+              No capabilities are defined in the Inhouse database yet.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-space-xs">
+              {capabilitiesCatalog.map((cap) => (
+                <label key={cap.id} className="flex items-center gap-2 bg-surface p-space-sm cursor-pointer hover:bg-surface-container-high">
+                  <input
+                    type="checkbox"
+                    className="accent-primary"
+                    checked={capabilityIds.has(cap.id)}
+                    onChange={() => toggle(capabilityIds, setCapabilityIds, cap.id)}
+                  />
+                  <span className="font-code-dense text-code-dense text-on-surface uppercase">{titleCase(cap.slug)}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-space-sm bg-surface-container-low p-space-md">
+          <span className="font-label-md text-label-md text-primary uppercase">Workloads</span>
+          {workloadsCatalog.length === 0 ? (
+            <div className="bg-surface p-space-sm font-body-sm text-body-sm text-on-surface-variant text-center">
+              No workloads are defined in the Inhouse database yet.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-space-xs">
+              {workloadsCatalog.map((w) => (
+                <label key={w.id} className="flex items-center gap-2 bg-surface p-space-sm cursor-pointer hover:bg-surface-container-high">
+                  <input
+                    type="checkbox"
+                    className="accent-primary"
+                    checked={workloadIds.has(w.id)}
+                    onChange={() => toggle(workloadIds, setWorkloadIds, w.id)}
+                  />
+                  <span className="font-code-dense text-code-dense text-on-surface-variant uppercase">{w.slug}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-space-sm bg-surface-container-low p-space-md">
+          <label className="flex items-center justify-between bg-surface p-space-sm cursor-pointer">
+            <span className="font-code-dense text-code-dense uppercase text-on-surface">Enabled</span>
+            <Toggle checked={status === "enabled"} onChange={(checked) => setStatus(checked ? "enabled" : "disabled")} />
+          </label>
+        </div>
+
+        <div className="flex items-center justify-end gap-space-sm">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" disabled={submitting || !vendorId || !providerModelId || !inhouseAlias || !displayName}>
+            <Icon name="add" size={16} />
+            {submitting ? "Saving…" : "Add Model"}
+          </Button>
+        </div>
+      </form>
+    </Drawer>
   );
 }
 

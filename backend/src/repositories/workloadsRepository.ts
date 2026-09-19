@@ -73,4 +73,17 @@ export class WorkloadsRepository {
       );
     }
   }
+
+  /** Replaces the full set of workloads a model is allowed to serve, atomically. */
+  async replaceForModel(modelId: string, workloadIds: string[]): Promise<void> {
+    await this.db.query("DELETE FROM model_workloads WHERE model_id = $1", [modelId]);
+    for (const workloadId of workloadIds) {
+      await this.db.query(
+        `INSERT INTO model_workloads (model_id, workload_id)
+         VALUES ($1, $2)
+         ON CONFLICT (model_id, workload_id) DO NOTHING`,
+        [modelId, workloadId],
+      );
+    }
+  }
 }

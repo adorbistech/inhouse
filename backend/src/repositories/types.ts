@@ -77,6 +77,9 @@ export interface ModelRow {
 
 export type NewModel = Omit<ModelRow, "id" | "created_at" | "updated_at">;
 
+/** `vendor_id` is intentionally excluded — immutable after creation (see docs/API.md). */
+export type ModelPatch = Partial<Omit<NewModel, "vendor_id">>;
+
 export interface CapabilityRow {
   id: string;
   slug: string;

@@ -75,4 +75,17 @@ export class CapabilitiesRepository {
       );
     }
   }
+
+  /** Replaces the full set of capabilities assigned to a model, atomically. */
+  async replaceForModel(modelId: string, capabilityIds: string[]): Promise<void> {
+    await this.db.query("DELETE FROM model_capabilities WHERE model_id = $1", [modelId]);
+    for (const capabilityId of capabilityIds) {
+      await this.db.query(
+        `INSERT INTO model_capabilities (model_id, capability_id)
+         VALUES ($1, $2)
+         ON CONFLICT (model_id, capability_id) DO NOTHING`,
+        [modelId, capabilityId],
+      );
+    }
+  }
 }

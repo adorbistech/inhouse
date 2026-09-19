@@ -1,6 +1,11 @@
 import type {
   CapabilityApi,
+  CreateModelPayload,
   CreateVendorPayload,
+  ModelApi,
+  ModelDetailApi,
+  ModelListFilters,
+  UpdateModelPayload,
   UpdateVendorPayload,
   VendorAccountApi,
   VendorApi,
@@ -140,4 +145,45 @@ export const api = {
   listCapabilities: () => request<{ capabilities: CapabilityApi[] }>("/capabilities"),
 
   listWorkloads: () => request<{ workloads: WorkloadApi[] }>("/workloads"),
+
+  listModels: (filters: ModelListFilters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.vendorId) params.set("vendorId", filters.vendorId);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.capabilityId) params.set("capabilityId", filters.capabilityId);
+    if (filters.workloadId) params.set("workloadId", filters.workloadId);
+    if (filters.search) params.set("search", filters.search);
+    if (filters.limit !== undefined) params.set("limit", String(filters.limit));
+    if (filters.offset !== undefined) params.set("offset", String(filters.offset));
+    const query = params.toString();
+    return request<{ models: ModelApi[] }>(`/models${query ? `?${query}` : ""}`);
+  },
+
+  getModel: (id: string) => request<{ model: ModelDetailApi }>(`/models/${id}`),
+
+  createModel: (payload: CreateModelPayload) =>
+    request<{ model: ModelDetailApi }>("/models", { method: "POST", body: JSON.stringify(payload) }),
+
+  updateModel: (id: string, patch: UpdateModelPayload) =>
+    request<{ model: ModelDetailApi }>(`/models/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+
+  disableModel: (id: string) => request<{ model: ModelDetailApi }>(`/models/${id}`, { method: "DELETE" }),
+
+  enableModel: (id: string) =>
+    request<{ model: ModelDetailApi }>(`/models/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "enabled" }),
+    }),
+
+  setModelCapabilities: (id: string, capabilityIds: string[]) =>
+    request<{ capabilities: CapabilityApi[] }>(`/models/${id}/capabilities`, {
+      method: "PUT",
+      body: JSON.stringify({ capabilityIds }),
+    }),
+
+  setModelWorkloads: (id: string, workloadIds: string[]) =>
+    request<{ workloads: WorkloadApi[] }>(`/models/${id}/workloads`, {
+      method: "PUT",
+      body: JSON.stringify({ workloadIds }),
+    }),
 };

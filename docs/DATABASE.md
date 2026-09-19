@@ -1,12 +1,16 @@
-# Inhouse Database (Block 05 — Persistence Foundation, extended in Block 06)
+# Inhouse Database (Block 05 — Persistence Foundation, extended in Block 06 and Block 07)
 
 ## Status
 
 Block 05 established **persistence only** (no API surface over it). Block
-06 adds the first real data-driven service on top of it — the Vendor
+06 added the first real data-driven service on top of it — the Vendor
 System (`docs/API.md`) — plus a schema extension (migration `0010`) for
 vendor-level priority, retry flags, and capability/workload assignment.
-Still not implemented, in either block:
+Block 07 adds a second data-driven service, the Model Catalog
+(`docs/API.md`), entirely on Block 05's existing `models` /
+`model_capabilities` / `model_workloads` tables — **no new migration was
+required.**
+Still not implemented, in any block so far:
 
 - provider integrations (real calls to a vendor's API)
 - a provider credential vault/encryption mechanism
@@ -147,11 +151,16 @@ All tables include `created_at`/`updated_at` (UTC, `TIMESTAMPTZ`, default
   The actual vault/encryption mechanism is a later block; this table only
   tracks lifecycle state for a credential that lives elsewhere.
 - **models** — provider model identifiers mapped to an Inhouse alias, per
-  vendor. No provider/model names are seeded.
+  vendor. No provider/model names are seeded. `(vendor_id,
+  provider_model_id)` and `inhouse_alias` are both unique. CRUD over this
+  table is exposed by the Model Catalog (Block 07, `docs/API.md`);
+  `vendor_id` is immutable after creation at the API layer.
 - **capabilities** / **model_capabilities** — generic capability tags,
-  joined to models many-to-many.
+  joined to models many-to-many. The Block 07 Model Catalog exposes
+  `PUT /v1/models/:id/capabilities` to replace a model's full assigned set.
 - **workloads** / **model_workloads** — data-driven workload records,
-  joined to models many-to-many.
+  joined to models many-to-many. The Block 07 Model Catalog exposes
+  `PUT /v1/models/:id/workloads` the same way.
 - **routing_tiers** — data representation of a workload's tiers (vendor,
   model, priority, timeout/attempt overrides). No routing logic.
 - **routing_fallback_rules** — configurable fallback conditions
@@ -243,21 +252,25 @@ restarts/recreations. A backup/restore strategy (e.g. `pg_dump` on a
 schedule) is deferred to a later block once there is real data worth
 protecting.
 
-## What Block 05 Did *Not* Implement (superseded where Block 06 adds it)
+## What Block 05 Did *Not* Implement (superseded where Block 06/07 adds it)
 
 - ~~HTTP CRUD routes over any of these tables~~ — Block 06 adds the
   Vendor System's CRUD API over `vendors`, `vendor_accounts`,
   `vendor_credentials` (metadata only), `capabilities`, and `workloads`.
-  See `docs/API.md`.
+  Block 07 adds the Model Catalog's CRUD API over `models`, plus
+  capability/workload assignment (`model_capabilities`/
+  `model_workloads`). See `docs/API.md`.
 - Provider integrations or a credential vault/encryption mechanism —
   still not implemented.
-- Model execution or a routing engine — still not implemented; Block 06
-  persists vendor-level routing-*adjacent* configuration (priority,
-  tier range, retry flags) but nothing executes it.
+- Model execution or a routing engine — still not implemented; Block
+  06/07 persist routing-*adjacent* configuration (vendor priority/retry
+  flags, which capabilities/workloads a model supports) but nothing
+  executes it.
 - API authentication (issuing/validating `inhouse_api_keys`) — still not
   implemented.
 - Claude Code integration — still not implemented.
 - Cost/pricing calculation or any pricing seed data — still not
   implemented.
 - Seed data for any real vendor, model, or provider name — still true in
-  Block 06: no vendor is created except through the API, by an operator.
+  Block 07: no vendor or model is created except through the API, by an
+  operator.

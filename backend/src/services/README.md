@@ -7,6 +7,10 @@ No SQL lives here — every query goes through a typed repository.
 - `vendorService.ts` (Block 06) — the Vendor System: vendors, vendor
   accounts, vendor credential metadata, and vendor capability/workload
   assignment.
+- `modelService.ts` (Block 07) — the Model Catalog: models, and model
+  capability/workload assignment. Mirrors `vendorService.ts`'s
+  architecture, including the existence-check guard for capability/
+  workload ids before assignment.
 
-Reserved for future Inhouse business logic not yet built: model catalog,
-routing, telemetry, accounting, provider adapters.
+Reserved for future Inhouse business logic not yet built: routing,
+telemetry, accounting, provider adapters.

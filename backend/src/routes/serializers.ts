@@ -1,4 +1,5 @@
-import type { CapabilityRow, VendorAccountRow, VendorRow, WorkloadRow } from "../repositories/types.js";
+import type { CapabilityRow, ModelRow, VendorAccountRow, VendorRow, WorkloadRow } from "../repositories/types.js";
+import type { ModelDetail } from "../services/modelService.js";
 import type { VendorDetail } from "../services/vendorService.js";
 
 /**
@@ -75,6 +76,28 @@ export function toVendorDetailResponse(detail: VendorDetail) {
   return {
     ...toVendorResponse(detail),
     accounts: detail.accounts.map(toAccountResponse),
+    capabilities: detail.capabilities.map(toCapabilityResponse),
+    workloads: detail.workloads.map(toWorkloadResponse),
+  };
+}
+
+export function toModelResponse(model: ModelRow) {
+  return {
+    id: model.id,
+    vendorId: model.vendor_id,
+    providerModelId: model.provider_model_id,
+    inhouseAlias: model.inhouse_alias,
+    displayName: model.display_name,
+    contextWindow: model.context_window,
+    status: model.status,
+    createdAt: model.created_at,
+    updatedAt: model.updated_at,
+  };
+}
+
+export function toModelDetailResponse(detail: ModelDetail) {
+  return {
+    ...toModelResponse(detail),
     capabilities: detail.capabilities.map(toCapabilityResponse),
     workloads: detail.workloads.map(toWorkloadResponse),
   };

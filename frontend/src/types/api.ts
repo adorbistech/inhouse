@@ -1,11 +1,13 @@
 /**
- * Types matching the real Inhouse API (Block 06 — Vendor System). These
- * are camelCase, matching the API's JSON contract exactly — distinct from
- * the Block 02 mock domain model in `./domain.ts`, which the Dashboard and
- * Settings pages still use for their still-mock sections.
+ * Types matching the real Inhouse API (Block 06 — Vendor System, Block 07 —
+ * Model Catalog). These are camelCase, matching the API's JSON contract
+ * exactly — distinct from the Block 02 mock domain model in `./domain.ts`,
+ * which the Dashboard and Settings "Routing"/"Accounting" tabs still use
+ * for their still-mock sections.
  */
 
 export type VendorStatus = "enabled" | "disabled" | "unavailable";
+export type ModelStatus = "enabled" | "disabled";
 
 export interface CapabilityApi {
   id: string;
@@ -109,3 +111,46 @@ export interface CreateVendorPayload {
 export type UpdateVendorPayload = Partial<Omit<CreateVendorPayload, "capabilityIds" | "workloadIds">> & {
   status?: VendorStatus;
 };
+
+export interface ModelApi {
+  id: string;
+  vendorId: string;
+  providerModelId: string;
+  inhouseAlias: string;
+  displayName: string;
+  contextWindow: number | null;
+  status: ModelStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelDetailApi extends ModelApi {
+  capabilities: CapabilityApi[];
+  workloads: WorkloadApi[];
+}
+
+export interface CreateModelPayload {
+  vendorId: string;
+  providerModelId: string;
+  inhouseAlias: string;
+  displayName: string;
+  contextWindow?: number;
+  status?: ModelStatus;
+  capabilityIds?: string[];
+  workloadIds?: string[];
+}
+
+/** `vendorId` is intentionally omitted — immutable after creation (see docs/API.md). */
+export type UpdateModelPayload = Partial<
+  Omit<CreateModelPayload, "vendorId" | "capabilityIds" | "workloadIds">
+>;
+
+export interface ModelListFilters {
+  vendorId?: string;
+  status?: ModelStatus;
+  capabilityId?: string;
+  workloadId?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}

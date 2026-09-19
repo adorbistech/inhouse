@@ -7,6 +7,7 @@ import { registerRequestContext } from "./plugins/requestContext.js";
 import { registerSecurity } from "./plugins/security.js";
 import { registerCapabilityRoutes } from "./routes/capabilities.js";
 import { registerHealthRoutes } from "./routes/health.js";
+import { registerModelRoutes } from "./routes/models.js";
 import { registerVendorRoutes } from "./routes/vendors.js";
 import { registerWorkloadRoutes } from "./routes/workloads.js";
 
@@ -82,6 +83,7 @@ export async function buildApp(config: AppConfig, options: BuildAppOptions = {})
     registerVendorRoutes(app, options.pool, config);
     registerCapabilityRoutes(app, options.pool, config);
     registerWorkloadRoutes(app, options.pool, config);
+    registerModelRoutes(app, options.pool, config);
   }
 
   return app;

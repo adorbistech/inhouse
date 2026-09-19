@@ -1,4 +1,4 @@
-# Inhouse API (Block 04 — Foundation, persistence added in Block 05, Vendor System added in Block 06)
+# Inhouse API (Block 04 — Foundation, persistence added in Block 05, Vendor System added in Block 06, Model Catalog added in Block 07)
 
 ## Status
 
@@ -10,32 +10,34 @@ call it yet and this document does not cover it.
 Block 05 added a PostgreSQL persistence layer (SQL migrations, a
 dedicated Inhouse schema, and typed repositories — see
 `docs/DATABASE.md`); at that point no HTTP route used it yet. **Block 06
-changes that for one domain: the Vendor System.** The distinction that
-matters going forward:
+changed that for one domain: the Vendor System. Block 07 adds a second:
+the Model Catalog.** The distinction that matters going forward:
 
 - **Persistence exists and is now reachable over HTTP** for vendors,
-  vendor accounts, vendor credential metadata, capabilities, and
-  workloads (see "Vendor System" below) — real reads/writes through the
-  Block 05/06 schema and repositories.
+  vendor accounts, vendor credential metadata, models, capabilities, and
+  workloads (see "Vendor System" and "Model Catalog" below) — real
+  reads/writes through the Block 05/06/07 schema and repositories.
 - **`/health` and `/ready` (and their `/v1` equivalents) remain
   database-free by design** — they never depend on the database, so they
   stay reliable as liveness/readiness probes regardless of the database's
-  state. This did not change in Block 06.
+  state. This did not change in Block 06 or Block 07.
 - **No route executes a provider call, routing decision, or model
-  execution.** The Vendor System persists *configuration* (including
-  routing-adjacent fields like priority and retry conditions) — nothing
-  reads that configuration to actually route or execute a request yet.
+  execution.** The Vendor System and Model Catalog persist *configuration*
+  (including routing-adjacent fields like priority and retry conditions,
+  and which capabilities/workloads a model supports) — nothing reads that
+  configuration to actually route or execute a request yet.
 - **No route implements authentication.** Every endpoint below, including
-  the Vendor System, is unauthenticated in this block (see
-  "Authentication").
+  the Vendor System and Model Catalog, is unauthenticated in this block
+  (see "Authentication").
 
 ## Service Purpose
 
 `inhouse-api` is the Inhouse product's own backend. It establishes the
 API contract (versioning, health/readiness, error shape, request
 correlation, logging, baseline security headers/CORS — Block 04) and, as
-of Block 06, the first real data-driven control-plane service on top of
-it (the Vendor System, Block 06) built on the Block 05 persistence layer.
+of Block 06/07, real data-driven control-plane services on top of it (the
+Vendor System, Block 06; the Model Catalog, Block 07) built on the Block
+05 persistence layer.
 The process now opens a Postgres connection pool at startup
 (`server.ts`, via `loadDbConfig()`/`createPool()`) — but `/health` and
 `/ready` still never touch it (see "Status" above).
@@ -184,6 +186,67 @@ are recorded to `audit_events` (`vendor.created`, `vendor.updated`,
 `vendor_credential.created`, `vendor_credential.updated`,
 `vendor_credential.deleted`). Audit metadata never includes a secret
 value or a `secretRef`.
+
+## Model Catalog (Block 07)
+
+All Model Catalog responses are JSON, camelCase, and share the standard
+error format below on failure. Every route lives under `/v1` and, like
+every route in this API, is currently unauthenticated (see
+"Authentication"). Full schema/persistence detail is in
+`docs/DATABASE.md`; this section documents the HTTP contract only.
+
+**Scope:** this block persists model *configuration* — which
+`provider_model_id` a vendor exposes, the Inhouse-facing alias, display
+name, context window, status, and which capabilities/workloads it's
+associated with. It does not call any provider, does not validate a
+model id against the vendor, and does not implement routing or
+execution — nothing reads this configuration to make a live decision yet.
+
+### Models
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/v1/models` | Optional `?vendorId=`, `?status=enabled\|disabled`, `?capabilityId=`, `?workloadId=`, `?search=` (matches display name, Inhouse alias, or provider model id), `?limit=` (default 50, max 200), `?offset=` |
+| `GET` | `/v1/models/:id` | Includes nested `capabilities`, `workloads` |
+| `POST` | `/v1/models` | Body: `{ vendorId, providerModelId, inhouseAlias, displayName, contextWindow?, status?, capabilityIds?, workloadIds? }`. Optionally assigns capabilities/workloads at creation, in the same transaction |
+| `PATCH` | `/v1/models/:id` | Partial update; at least one field required. `vendorId` cannot be changed — see "Immutability" |
+| `DELETE` | `/v1/models/:id` | **Soft-disable** (`status` → `disabled`), not a row deletion — same reasoning as vendor deletion |
+| `PUT` | `/v1/models/:id/capabilities` | Replaces the full assigned-capability set (body: `{ "capabilityIds": [...] }`) |
+| `PUT` | `/v1/models/:id/workloads` | Replaces the full allowed-workload set (body: `{ "workloadIds": [...] }`) |
+
+A model status is one of `enabled` / `disabled` — enforced by request
+validation, not a database constraint (see `docs/DATABASE.md`). There is
+no separate "enable" endpoint: re-enabling a disabled model is a `PATCH`
+with `{ "status": "enabled" }`.
+
+`inhouseAlias` must be a lowercase, dash-separated identifier (e.g.
+`my-model-alias`) and is unique across all models. The pair
+`(vendorId, providerModelId)` is also unique — the same provider model id
+may be registered under different vendors, but not twice under the same
+vendor.
+
+### Immutability
+
+`vendorId` cannot be changed after a model is created — a `PATCH` that
+includes `vendorId` is rejected with a `400`. Re-parenting a model to a
+different vendor is not supported in this block; create a new model
+under the intended vendor instead.
+
+### Validation
+
+`GET /v1/models` filters are validated the same way regardless of source
+(query strings arrive as strings): `vendorId`/`capabilityId`/`workloadId`
+must be UUIDs, `status` must be a known value, `limit` must be an integer
+in `1..200`, `offset` must be a non-negative integer. Referencing an
+unknown vendor, capability, or workload id on create/update/assignment
+returns a structured `400 VALIDATION_ERROR` — never a `500`.
+
+### Audit Trail
+
+Model create, update, status-change, and assignment operations are
+recorded to `audit_events` (`model.created`, `model.updated`,
+`model.enabled`, `model.disabled`, `model.capabilities_updated`,
+`model.workloads_updated`).
 
 ## Request ID / Correlation
 
