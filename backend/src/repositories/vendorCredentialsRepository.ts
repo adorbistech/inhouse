@@ -1,5 +1,11 @@
 import { expectRow, type Queryable } from "../db/client.js";
-import type { NewVendorCredential, VendorCredentialRow } from "./types.js";
+import type { NewVendorCredential, VendorCredentialPatch, VendorCredentialRow } from "./types.js";
+
+const CREDENTIAL_PATCH_COLUMNS = [
+  "credential_type",
+  "secret_ref",
+  "status",
+] as const satisfies readonly (keyof VendorCredentialPatch)[];
 
 export class VendorCredentialsRepository {
   constructor(private readonly db: Queryable) {}
@@ -27,6 +33,32 @@ export class VendorCredentialsRepository {
     return result.rows;
   }
 
+  /** All credentials across every account belonging to a vendor. */
+  async listByVendorId(vendorId: string): Promise<VendorCredentialRow[]> {
+    const result = await this.db.query<VendorCredentialRow>(
+      `SELECT vc.* FROM vendor_credentials vc
+       JOIN vendor_accounts va ON va.id = vc.vendor_account_id
+       WHERE va.vendor_id = $1
+       ORDER BY vc.created_at`,
+      [vendorId],
+    );
+    return result.rows;
+  }
+
+  async update(id: string, patch: VendorCredentialPatch): Promise<VendorCredentialRow | null> {
+    const columns = CREDENTIAL_PATCH_COLUMNS.filter((column) => patch[column] !== undefined);
+    if (columns.length === 0) {
+      return this.findById(id);
+    }
+    const setClause = columns.map((column, index) => `${column} = $${index + 2}`).join(", ");
+    const values = columns.map((column) => patch[column]);
+    const result = await this.db.query<VendorCredentialRow>(
+      `UPDATE vendor_credentials SET ${setClause} WHERE id = $1 RETURNING *`,
+      [id, ...values],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async markTested(id: string, successful: boolean): Promise<VendorCredentialRow | null> {
     const result = await this.db.query<VendorCredentialRow>(
       `UPDATE vendor_credentials
@@ -36,5 +68,11 @@ export class VendorCredentialsRepository {
       [id, successful],
     );
     return result.rows[0] ?? null;
+  }
+
+  /** No downstream table references a credential by id — a hard delete is safe. */
+  async delete(id: string): Promise<boolean> {
+    const result = await this.db.query("DELETE FROM vendor_credentials WHERE id = $1", [id]);
+    return (result.rowCount ?? 0) > 0;
   }
 }

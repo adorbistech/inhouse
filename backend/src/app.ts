@@ -1,14 +1,26 @@
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
+import type { Pool } from "pg";
 import type { AppConfig } from "./config/index.js";
 import { registerErrorHandling } from "./plugins/errorHandler.js";
 import { registerRequestContext } from "./plugins/requestContext.js";
 import { registerSecurity } from "./plugins/security.js";
+import { registerCapabilityRoutes } from "./routes/capabilities.js";
 import { registerHealthRoutes } from "./routes/health.js";
+import { registerVendorRoutes } from "./routes/vendors.js";
+import { registerWorkloadRoutes } from "./routes/workloads.js";
 
 export interface BuildAppOptions {
   /** Override the logger's output stream. Used by tests to capture log lines. */
   loggerStream?: NodeJS.WritableStream;
+  /**
+   * Postgres pool for Block 06+ data-backed routes (vendors, capabilities,
+   * workloads). Optional and intentionally separate from `/health`/`/ready`
+   * (see routes/health.ts) — those never depend on the database. Tests that
+   * only exercise the Block 04 HTTP contract can keep calling `buildApp`
+   * without a pool and never touch Postgres.
+   */
+  pool?: Pool;
 }
 
 const REDACTED_PATHS = [
@@ -65,6 +77,12 @@ export async function buildApp(config: AppConfig, options: BuildAppOptions = {})
   registerErrorHandling(app);
   await registerSecurity(app, config);
   registerHealthRoutes(app, config);
+
+  if (options.pool) {
+    registerVendorRoutes(app, options.pool, config);
+    registerCapabilityRoutes(app, options.pool, config);
+    registerWorkloadRoutes(app, options.pool, config);
+  }
 
   return app;
 }

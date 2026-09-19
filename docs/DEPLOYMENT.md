@@ -1,10 +1,16 @@
-# Inhouse — Deployment Foundation (Block 03, extended in Block 04 and Block 05)
+# Inhouse — Deployment Foundation (Block 03, extended in Block 04, Block 05, and Block 06)
 
 ## Status
 
 Frontend, backend/API, and database deployment foundations exist. See
-`docs/API.md` for the backend's API contract and `docs/DATABASE.md` for
-the persistence foundation added in Block 05.
+`docs/API.md` for the backend's API contract (including the Block 06
+Vendor System) and `docs/DATABASE.md` for the persistence foundation
+added in Block 05 and extended in Block 06.
+
+**Block 06 made no deployment/Docker changes** — no new service, port,
+network, or volume. It only added application code (routes, a schema
+migration) on top of the Block 03–05 deployment foundation, which is
+unchanged.
 
 ## VPS Discovery (read-only, recorded at time of Block 03 Prompt 1)
 

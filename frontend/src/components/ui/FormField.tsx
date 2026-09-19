@@ -4,12 +4,17 @@ interface FormFieldProps {
   className?: string;
 }
 
+/**
+ * The outer element is a native `<label>` (not a `<div>`) so it associates
+ * with a wrapped `<input>`/`<select>` automatically — same visual result,
+ * but accessible and queryable by label text.
+ */
 export function FormField({ label, children, className = "" }: FormFieldProps) {
   return (
-    <div className={`flex flex-col gap-1 ${className}`}>
-      <label className="font-code-dense text-code-dense text-on-surface-variant uppercase">{label}</label>
+    <label className={`flex flex-col gap-1 ${className}`}>
+      <span className="font-code-dense text-code-dense text-on-surface-variant uppercase">{label}</span>
       {children}
-    </div>
+    </label>
   );
 }
 

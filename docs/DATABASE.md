@@ -1,18 +1,23 @@
-# Inhouse Database (Block 05 — Persistence Foundation)
+# Inhouse Database (Block 05 — Persistence Foundation, extended in Block 06)
 
 ## Status
 
-This block establishes **persistence only**. It does not implement:
+Block 05 established **persistence only** (no API surface over it). Block
+06 adds the first real data-driven service on top of it — the Vendor
+System (`docs/API.md`) — plus a schema extension (migration `0010`) for
+vendor-level priority, retry flags, and capability/workload assignment.
+Still not implemented, in either block:
 
-- provider integrations
-- a provider credential vault
+- provider integrations (real calls to a vendor's API)
+- a provider credential vault/encryption mechanism
 - model execution
-- a routing engine
+- a routing engine (routing *configuration* is persisted; nothing
+  executes it)
 - API authentication
 - Claude Code integration
 - accounting/cost calculations
 
-Those are later blocks. This document covers the database layer that they
+Those remain later blocks. This document covers the database layer they
 will build on: an isolated Postgres service, SQL migrations, schema, and
 typed repositories.
 
@@ -108,6 +113,18 @@ npm run db:migrate          # apply pending migrations
 npm run db:migrate:status   # list applied/pending without changing anything
 ```
 
+**Block 06 migration:** `0010_vendor_priority_retry_and_assignments.sql`
+adds `priority` and five per-condition `retry_on_*` boolean columns to
+`vendors`, plus two new join tables: `vendor_capabilities` and
+`vendor_workloads`. Why: Block 05's `capabilities`/`workloads` reference
+data was only ever joined to *models* (`model_capabilities`,
+`model_workloads`) — the Vendor System needs a distinct vendor-level
+edge (which capabilities a vendor advertises, which workloads it's
+allowed to serve), not a duplicate of the model-level one. Nothing
+existing was altered or renamed; this is purely additive (`ALTER TABLE
+... ADD COLUMN`, two new `CREATE TABLE`s), applied as one migration file,
+transactional and repeat-safe like every other migration here.
+
 ## Schema — Entities
 
 All tables include `created_at`/`updated_at` (UTC, `TIMESTAMPTZ`, default
@@ -115,8 +132,16 @@ All tables include `created_at`/`updated_at` (UTC, `TIMESTAMPTZ`, default
 (`set_updated_at`) that refreshes it on every `UPDATE`.
 
 - **vendors** — vendor registry (slug, type, protocol, endpoint, billing,
-  tiering, retry/timeout defaults). No provider names are seeded.
+  tiering, retry/timeout defaults, priority). No provider names are
+  seeded. Lifecycle status is one of `enabled` / `disabled` /
+  `unavailable` (enforced at the API validation layer — the column
+  itself remains plain `TEXT`, unconstrained by the database, matching
+  Block 05's original design).
 - **vendor_accounts** — one or more accounts per vendor.
+- **vendor_capabilities** / **vendor_workloads** (Block 06) — which
+  capabilities a vendor advertises and which workloads it may serve, as
+  data. Distinct from `model_capabilities`/`model_workloads`, which
+  describe a *model's* capabilities/workloads, not a vendor's.
 - **vendor_credentials** — credential *metadata only* (`secret_ref`,
   status, last tested/successful). **Never a plaintext secret column.**
   The actual vault/encryption mechanism is a later block; this table only
@@ -218,12 +243,21 @@ restarts/recreations. A backup/restore strategy (e.g. `pg_dump` on a
 schedule) is deferred to a later block once there is real data worth
 protecting.
 
-## What This Block Does *Not* Implement
+## What Block 05 Did *Not* Implement (superseded where Block 06 adds it)
 
-- Provider integrations or a credential vault/encryption mechanism
-- Model execution or a routing engine
-- API authentication (issuing/validating `inhouse_api_keys`)
-- Claude Code integration
-- Cost/pricing calculation or any pricing seed data
-- HTTP CRUD routes over any of these tables
-- Seed data for any real vendor, model, or provider name
+- ~~HTTP CRUD routes over any of these tables~~ — Block 06 adds the
+  Vendor System's CRUD API over `vendors`, `vendor_accounts`,
+  `vendor_credentials` (metadata only), `capabilities`, and `workloads`.
+  See `docs/API.md`.
+- Provider integrations or a credential vault/encryption mechanism —
+  still not implemented.
+- Model execution or a routing engine — still not implemented; Block 06
+  persists vendor-level routing-*adjacent* configuration (priority,
+  tier range, retry flags) but nothing executes it.
+- API authentication (issuing/validating `inhouse_api_keys`) — still not
+  implemented.
+- Claude Code integration — still not implemented.
+- Cost/pricing calculation or any pricing seed data — still not
+  implemented.
+- Seed data for any real vendor, model, or provider name — still true in
+  Block 06: no vendor is created except through the API, by an operator.

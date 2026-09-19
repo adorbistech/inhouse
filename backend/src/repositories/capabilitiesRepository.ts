@@ -43,4 +43,36 @@ export class CapabilitiesRepository {
     );
     return result.rows;
   }
+
+  async findByIds(ids: string[]): Promise<CapabilityRow[]> {
+    if (ids.length === 0) return [];
+    const result = await this.db.query<CapabilityRow>("SELECT * FROM capabilities WHERE id = ANY($1::uuid[])", [
+      ids,
+    ]);
+    return result.rows;
+  }
+
+  async listForVendor(vendorId: string): Promise<CapabilityRow[]> {
+    const result = await this.db.query<CapabilityRow>(
+      `SELECT c.* FROM capabilities c
+       JOIN vendor_capabilities vc ON vc.capability_id = c.id
+       WHERE vc.vendor_id = $1
+       ORDER BY c.slug`,
+      [vendorId],
+    );
+    return result.rows;
+  }
+
+  /** Replaces the full set of capabilities assigned to a vendor, atomically. */
+  async replaceForVendor(vendorId: string, capabilityIds: string[]): Promise<void> {
+    await this.db.query("DELETE FROM vendor_capabilities WHERE vendor_id = $1", [vendorId]);
+    for (const capabilityId of capabilityIds) {
+      await this.db.query(
+        `INSERT INTO vendor_capabilities (vendor_id, capability_id)
+         VALUES ($1, $2)
+         ON CONFLICT (vendor_id, capability_id) DO NOTHING`,
+        [vendorId, capabilityId],
+      );
+    }
+  }
 }

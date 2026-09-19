@@ -39,6 +39,12 @@ test("deleting a vendor cascades to its dependent vendor_accounts", async () => 
       timeout_ms: 5000,
       retry_max_attempts: 1,
       retry_backoff_ms: 100,
+      priority: 0,
+      retry_on_timeout: false,
+      retry_on_rate_limit: false,
+      retry_on_5xx: false,
+      retry_on_auth_failure: false,
+      retry_on_invalid_response: false,
     });
 
     await pool.query(`INSERT INTO vendor_accounts (vendor_id, slug, display_name, status) VALUES ($1, $2, $3, $4)`, [
@@ -75,6 +81,12 @@ test("vendor slugs must be unique", async () => {
       timeout_ms: null,
       retry_max_attempts: null,
       retry_backoff_ms: null,
+      priority: 0,
+      retry_on_timeout: false,
+      retry_on_rate_limit: false,
+      retry_on_5xx: false,
+      retry_on_auth_failure: false,
+      retry_on_invalid_response: false,
     };
 
     await vendors.create(newVendor);

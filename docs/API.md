@@ -1,37 +1,44 @@
-# Inhouse API (Block 04 — Foundation, persistence added in Block 05)
+# Inhouse API (Block 04 — Foundation, persistence added in Block 05, Vendor System added in Block 06)
 
 ## Status
 
-This is the backend/API **boundary foundation** only. No authentication,
-vendors, models, routing, provider adapters, telemetry, or accounting
-exists yet. Those are later blocks. `/root/adorbis-api` is a separate,
-external service — Inhouse does not call it yet and this document does
-not cover it.
+Authentication, model execution, routing, provider adapters, telemetry,
+and accounting still do not exist. Those remain later blocks.
+`/root/adorbis-api` is a separate, external service — Inhouse does not
+call it yet and this document does not cover it.
 
-Block 05 added a PostgreSQL persistence layer to the repository (SQL
-migrations, a dedicated Inhouse schema, and typed repositories — see
-`docs/DATABASE.md`). **No current HTTP route in this API uses it yet.**
-The distinction matters:
+Block 05 added a PostgreSQL persistence layer (SQL migrations, a
+dedicated Inhouse schema, and typed repositories — see
+`docs/DATABASE.md`); at that point no HTTP route used it yet. **Block 06
+changes that for one domain: the Vendor System.** The distinction that
+matters going forward:
 
-- **Persistence exists** as a foundation: migrations, schema, and
-  repositories are real and tested, independent of this HTTP layer.
-- **This API's routes remain database-free in practice** — the health and
-  readiness endpoints below never depend on the database (by design, so
-  they stay reliable as liveness/readiness probes), and no route performs
-  database-backed CRUD. No pool is even opened when the API process
-  starts.
-- Database-backed API functionality (routes that read or write through
-  the repositories) is explicitly out of scope until a later block wires
-  it up.
+- **Persistence exists and is now reachable over HTTP** for vendors,
+  vendor accounts, vendor credential metadata, capabilities, and
+  workloads (see "Vendor System" below) — real reads/writes through the
+  Block 05/06 schema and repositories.
+- **`/health` and `/ready` (and their `/v1` equivalents) remain
+  database-free by design** — they never depend on the database, so they
+  stay reliable as liveness/readiness probes regardless of the database's
+  state. This did not change in Block 06.
+- **No route executes a provider call, routing decision, or model
+  execution.** The Vendor System persists *configuration* (including
+  routing-adjacent fields like priority and retry conditions) — nothing
+  reads that configuration to actually route or execute a request yet.
+- **No route implements authentication.** Every endpoint below, including
+  the Vendor System, is unauthenticated in this block (see
+  "Authentication").
 
 ## Service Purpose
 
-`inhouse-api` is the Inhouse product's own backend. Its HTTP surface is
-provider-neutral and, at this stage, database-free in practice: it exists
-to establish the API contract (versioning, health/readiness, error shape,
-request correlation, logging, and baseline security headers/CORS) that
-later blocks build on. The Block 05 persistence layer lives alongside
-this service in the same repository but is not yet called from any route.
+`inhouse-api` is the Inhouse product's own backend. It establishes the
+API contract (versioning, health/readiness, error shape, request
+correlation, logging, baseline security headers/CORS — Block 04) and, as
+of Block 06, the first real data-driven control-plane service on top of
+it (the Vendor System, Block 06) built on the Block 05 persistence layer.
+The process now opens a Postgres connection pool at startup
+(`server.ts`, via `loadDbConfig()`/`createPool()`) — but `/health` and
+`/ready` still never touch it (see "Status" above).
 
 ## Base URL Concept
 
@@ -47,9 +54,10 @@ exists.
 The versioned contract lives under `/v1`. Root-level, unversioned routes
 (`/health`, `/ready`) exist purely as infrastructure probes (e.g. the
 Docker `HEALTHCHECK`) and are not part of the versioned API contract.
-Future functional endpoints (`/v1/auth`, `/v1/vendors`, `/v1/models`,
-`/v1/routing`, `/v1/executions`, `/v1/usage`, ...) will be added under
-`/v1` in later blocks — none of them exist yet.
+`/v1/vendors`, `/v1/capabilities`, and `/v1/workloads` exist as of Block
+06 (see "Vendor System" below). Future functional endpoints (`/v1/auth`,
+`/v1/models`, `/v1/routing`, `/v1/executions`, `/v1/usage`, ...) will be
+added under `/v1` in later blocks — none of them exist yet.
 
 ## Endpoints (current)
 
@@ -82,6 +90,100 @@ checking it and can diverge from `/health`.
   "timestamp": "2026-09-18T20:30:00.000Z"
 }
 ```
+
+## Vendor System (Block 06)
+
+All Vendor System responses are JSON, camelCase, and share the standard
+error format below on failure. Every route lives under `/v1` and, like
+every route in this API, is currently unauthenticated (see
+"Authentication"). Full schema/persistence detail is in
+`docs/DATABASE.md`; this section documents the HTTP contract only.
+
+**Scope:** this block persists vendor *configuration* — it does not call
+any real provider, does not test credentials against a provider, and
+does not execute routing. A vendor's `status`, capabilities, workloads,
+priority, and retry flags are all data an operator sets; nothing reads
+them to make a live decision yet.
+
+### Vendors
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/v1/vendors` | Optional `?status=enabled\|disabled\|unavailable` filter |
+| `GET` | `/v1/vendors/:id` | Includes nested `accounts`, `capabilities`, `workloads` |
+| `POST` | `/v1/vendors` | Optionally accepts `capabilityIds`/`workloadIds` to assign at creation, in the same transaction |
+| `PATCH` | `/v1/vendors/:id` | Partial update; at least one field required |
+| `DELETE` | `/v1/vendors/:id` | **Soft-disable** (`status` → `disabled`), not a row deletion — see "Deletion Semantics" |
+| `PUT` | `/v1/vendors/:id/capabilities` | Replaces the full assigned-capability set (body: `{ "capabilityIds": [...] }`) |
+| `PUT` | `/v1/vendors/:id/workloads` | Replaces the full allowed-workload set (body: `{ "workloadIds": [...] }`) |
+
+A vendor status is one of `enabled` / `disabled` / `unavailable` —
+enforced by request validation, not a database constraint (see
+`docs/DATABASE.md`).
+
+### Vendor Accounts
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/v1/vendors/:id/accounts` | |
+| `POST` | `/v1/vendors/:id/accounts` | |
+| `PATCH` | `/v1/vendors/:id/accounts/:accountId` | |
+| `DELETE` | `/v1/vendors/:id/accounts/:accountId` | **Soft-disable**, same reasoning as vendor deletion |
+
+A vendor may have multiple accounts; nothing in this API assumes a fixed
+`accounts[0]` — every account has its own id, slug, and status.
+
+### Vendor Credentials — metadata only, never a secret
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/v1/vendors/:id/credentials` | All credentials across every account belonging to the vendor |
+| `POST` | `/v1/vendors/:id/credentials` | Body: `{ vendorAccountId, credentialType, secretRef }` — see below |
+| `PATCH` | `/v1/vendors/:id/credentials/:credentialId` | |
+| `DELETE` | `/v1/vendors/:id/credentials/:credentialId` | **Hard delete** — safe, since no other table references a credential by id |
+
+**`secretRef` is a reference (e.g. a vault path or external secret-manager
+ID), never a plaintext provider API key, bearer token, or password.**
+This endpoint never accepts and never returns raw secret material — the
+response shape is an explicit whitelist (`id`, `vendorAccountId`,
+`credentialType`, `status`, `secretRef`, `createdAt`, `updatedAt`,
+`lastTestedAt`, `lastSuccessfulAt`) that cannot grow to include a secret
+column by accident. Registering a credential is intentionally a separate
+action from creating a vendor — this API never asks for a provider secret
+as part of `POST /v1/vendors`. There is no "test connection against the
+provider" endpoint in this block; that requires a real provider adapter
+(a later block).
+
+### Reference Data
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/v1/capabilities` | All capability definitions. Empty until an operator creates rows directly (no seed data — see `docs/DATABASE.md`) |
+| `GET` | `/v1/workloads` | All workload definitions. Same as above |
+
+There is no `POST`/create endpoint for capabilities or workloads in this
+block — assigning them to a vendor (via the vendor endpoints above) is in
+scope; defining new capability/workload reference rows is not.
+
+### Deletion Semantics
+
+`DELETE` on a vendor or vendor account never removes the row. Both have
+`ON DELETE CASCADE` foreign keys from dependent tables (accounts,
+credentials, models, routing configuration for a vendor; credentials for
+an account) — a real `DELETE` would silently destroy that configuration.
+Instead, `DELETE` sets `status` to `disabled`. Vendor credentials have no
+such downstream dependents, so `DELETE` there is a real row deletion.
+
+### Audit Trail
+
+Vendor/account/credential create, update, and status-change operations
+are recorded to `audit_events` (`vendor.created`, `vendor.updated`,
+`vendor.enabled`, `vendor.disabled`, `vendor.capabilities_updated`,
+`vendor.workloads_updated`, `vendor_account.created`,
+`vendor_account.updated`, `vendor_account.disabled`,
+`vendor_credential.created`, `vendor_credential.updated`,
+`vendor_credential.deleted`). Audit metadata never includes a secret
+value or a `secretRef`.
 
 ## Request ID / Correlation
 
@@ -130,6 +232,10 @@ All runtime configuration is environment-driven (see the repository root
 Invalid values (e.g. a non-numeric port, an unrecognized log level) cause
 the process to fail fast at startup with a descriptive error rather than
 running in an undefined state.
+
+The Vendor System additionally requires the `INHOUSE_DB_*` variables
+documented in `docs/DATABASE.md` — the process fails fast at startup if
+`INHOUSE_DB_PASSWORD` is missing, for the same fail-fast reason.
 
 ## Authentication
 

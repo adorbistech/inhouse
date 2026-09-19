@@ -27,6 +27,12 @@ const sampleVendor = {
   timeout_ms: 5000,
   retry_max_attempts: 2,
   retry_backoff_ms: 250,
+  priority: 0,
+  retry_on_timeout: false,
+  retry_on_rate_limit: false,
+  retry_on_5xx: false,
+  retry_on_auth_failure: false,
+  retry_on_invalid_response: false,
 };
 
 test("vendor repository creates and reads back a vendor", async () => {

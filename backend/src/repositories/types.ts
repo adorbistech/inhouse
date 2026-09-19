@@ -14,11 +14,24 @@ export interface VendorRow {
   timeout_ms: number | null;
   retry_max_attempts: number | null;
   retry_backoff_ms: number | null;
+  priority: number;
+  retry_on_timeout: boolean;
+  retry_on_rate_limit: boolean;
+  retry_on_5xx: boolean;
+  retry_on_auth_failure: boolean;
+  retry_on_invalid_response: boolean;
   created_at: Date;
   updated_at: Date;
 }
 
 export type NewVendor = Omit<VendorRow, "id" | "created_at" | "updated_at">;
+
+/** Partial update — every field optional, `id`/timestamps never settable. */
+export type VendorPatch = Partial<NewVendor>;
+
+export type VendorAccountPatch = Partial<Omit<NewVendorAccount, "vendor_id">>;
+
+export type VendorCredentialPatch = Partial<Pick<VendorCredentialRow, "credential_type" | "secret_ref" | "status">>;
 
 export interface VendorAccountRow {
   id: string;
