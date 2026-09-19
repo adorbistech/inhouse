@@ -122,7 +122,9 @@ export const api = {
 
   createCredential: (
     vendorId: string,
-    payload: { vendorAccountId: string; credentialType: string; secretRef: string },
+    payload:
+      | { vendorAccountId: string; credentialType: string; secretRef: string }
+      | { vendorAccountId: string; credentialType: string; secret: string },
   ) =>
     request<{ credential: VendorCredentialApi }>(`/vendors/${vendorId}/credentials`, {
       method: "POST",
@@ -132,7 +134,7 @@ export const api = {
   updateCredential: (
     vendorId: string,
     credentialId: string,
-    patch: { credentialType?: string; secretRef?: string; status?: string },
+    patch: { credentialType?: string; secretRef?: string; secret?: string; status?: string },
   ) =>
     request<{ credential: VendorCredentialApi }>(`/vendors/${vendorId}/credentials/${credentialId}`, {
       method: "PATCH",

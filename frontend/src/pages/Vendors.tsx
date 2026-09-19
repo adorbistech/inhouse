@@ -595,7 +595,13 @@ function VendorAccountsAndCredentials({
   const [newAccountName, setNewAccountName] = useState("");
   const [registeringCredential, setRegisteringCredential] = useState(false);
   const [credentialType, setCredentialType] = useState("api_key");
+  const [secretMode, setSecretMode] = useState<"managed" | "external">("managed");
+  const [secret, setSecret] = useState("");
   const [secretRef, setSecretRef] = useState("");
+  const [rotating, setRotating] = useState(false);
+  const [rotateSecretMode, setRotateSecretMode] = useState<"managed" | "external">("managed");
+  const [rotateSecret, setRotateSecret] = useState("");
+  const [rotateSecretRef, setRotateSecretRef] = useState("");
 
   async function submitNewAccount() {
     try {
@@ -612,16 +618,48 @@ function VendorAccountsAndCredentials({
   async function submitCredential() {
     if (!selectedAccount) return;
     try {
-      await api.createCredential(vendorId, {
-        vendorAccountId: selectedAccount.id,
-        credentialType,
-        secretRef,
-      });
+      await api.createCredential(
+        vendorId,
+        secretMode === "managed"
+          ? { vendorAccountId: selectedAccount.id, credentialType, secret }
+          : { vendorAccountId: selectedAccount.id, credentialType, secretRef },
+      );
       setRegisteringCredential(false);
+      // Never retain the raw secret in state any longer than it takes to submit it.
+      setSecret("");
       setSecretRef("");
       onChanged();
     } catch (error) {
       onError(error instanceof ApiError ? error.message : "Failed to register credential.");
+    }
+  }
+
+  async function toggleCredentialStatus() {
+    if (!credential) return;
+    try {
+      await api.updateCredential(vendorId, credential.id, {
+        status: credential.status === "enabled" ? "disabled" : "enabled",
+      });
+      onChanged();
+    } catch (error) {
+      onError(error instanceof ApiError ? error.message : "Failed to update credential status.");
+    }
+  }
+
+  async function submitRotate() {
+    if (!credential) return;
+    try {
+      await api.updateCredential(
+        vendorId,
+        credential.id,
+        rotateSecretMode === "managed" ? { secret: rotateSecret } : { secretRef: rotateSecretRef },
+      );
+      setRotating(false);
+      setRotateSecret("");
+      setRotateSecretRef("");
+      onChanged();
+    } catch (error) {
+      onError(error instanceof ApiError ? error.message : "Failed to rotate credential.");
     }
   }
 
@@ -706,14 +744,15 @@ function VendorAccountsAndCredentials({
             <>
               <div className="flex flex-col gap-space-xs">
                 <span className="font-code-dense text-code-dense text-outline uppercase tracking-wider">
-                  Credential Reference — {selectedAccount.displayName}
+                  Credential — {selectedAccount.displayName}
                 </span>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-space-sm bg-surface p-space-sm">
                   <div className="flex items-center gap-space-sm">
                     <Icon name="key" className="text-primary" size={18} />
                     <span className="font-code-dense text-code-dense text-on-surface font-bold">
-                      {credential.credentialType}: {credential.secretRef}
+                      {credential.credentialType}: {credential.hasManagedSecret ? credential.maskedSecret : credential.secretRef}
                     </span>
+                    {credential.hasManagedSecret && <Chip tone="secondary">Inhouse Vault</Chip>}
                     <Chip tone={credential.status === "enabled" ? "tertiary" : "error"}>{credential.status}</Chip>
                   </div>
                 </div>
@@ -723,46 +762,127 @@ function VendorAccountsAndCredentials({
                 <InfoTile label="Last Tested" value={credential.lastTestedAt ? formatDateTime(credential.lastTestedAt) : "Never"} />
                 <InfoTile label="Last Successful" value={credential.lastSuccessfulAt ? formatDateTime(credential.lastSuccessfulAt) : "Never"} />
               </div>
-              <div className="flex flex-wrap items-center gap-space-sm pt-space-xs">
-                <Button variant="secondary" disabled title="Provider connection testing is implemented in a later block.">
-                  <Icon name="bolt" size={16} />
-                  Test Connection (Not Yet Available)
-                </Button>
-                <Button
-                  variant="destructive"
-                  className="ml-auto"
-                  onClick={async () => {
-                    try {
-                      await api.deleteCredential(vendorId, credential.id);
-                      onChanged();
-                    } catch (error) {
-                      onError(error instanceof ApiError ? error.message : "Failed to remove credential.");
-                    }
-                  }}
-                >
-                  <Icon name="delete" size={16} />
-                  Remove
-                </Button>
-              </div>
+
+              {rotating ? (
+                <div className="flex flex-col gap-space-sm bg-surface p-space-sm">
+                  <SecretModeToggle mode={rotateSecretMode} onChange={setRotateSecretMode} />
+                  {rotateSecretMode === "managed" ? (
+                    <FormField label="New Secret (encrypted by Inhouse before storage; never shown again)">
+                      <TextInput
+                        type="password"
+                        autoComplete="off"
+                        value={rotateSecret}
+                        onChange={(e) => setRotateSecret(e.target.value)}
+                        placeholder="Paste the new provider secret"
+                      />
+                    </FormField>
+                  ) : (
+                    <FormField label="New Secret Reference (vault path / ID — never the raw secret)">
+                      <TextInput
+                        value={rotateSecretRef}
+                        onChange={(e) => setRotateSecretRef(e.target.value)}
+                        placeholder="e.g. vault://inhouse/vendor-credentials/…"
+                      />
+                    </FormField>
+                  )}
+                  <div className="flex items-center gap-space-xs justify-end">
+                    <Button
+                      variant="secondary"
+                      type="button"
+                      onClick={() => {
+                        setRotating(false);
+                        setRotateSecret("");
+                        setRotateSecretRef("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="primary"
+                      type="button"
+                      onClick={submitRotate}
+                      disabled={rotateSecretMode === "managed" ? !rotateSecret : !rotateSecretRef}
+                    >
+                      Save New Secret
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-space-sm pt-space-xs">
+                  <Button variant="secondary" onClick={() => setRotating(true)}>
+                    <Icon name="autorenew" size={16} />
+                    Rotate Secret
+                  </Button>
+                  <Button variant="secondary" onClick={toggleCredentialStatus}>
+                    <Icon name={credential.status === "enabled" ? "toggle_off" : "toggle_on"} size={16} />
+                    {credential.status === "enabled" ? "Disable" : "Enable"}
+                  </Button>
+                  <Button variant="secondary" disabled title="Provider connection testing is implemented in a later block.">
+                    <Icon name="bolt" size={16} />
+                    Test Connection (Not Yet Available)
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="ml-auto"
+                    onClick={async () => {
+                      try {
+                        await api.deleteCredential(vendorId, credential.id);
+                        onChanged();
+                      } catch (error) {
+                        onError(error instanceof ApiError ? error.message : "Failed to remove credential.");
+                      }
+                    }}
+                  >
+                    <Icon name="delete" size={16} />
+                    Remove
+                  </Button>
+                </div>
+              )}
             </>
           ) : registeringCredential ? (
             <div className="flex flex-col gap-space-sm bg-surface p-space-sm">
               <FormField label="Credential Type">
                 <TextInput value={credentialType} onChange={(e) => setCredentialType(e.target.value)} />
               </FormField>
-              <FormField label="Secret Reference (vault path / ID — never the raw secret)">
-                <TextInput
-                  value={secretRef}
-                  onChange={(e) => setSecretRef(e.target.value)}
-                  placeholder="e.g. vault://inhouse/vendor-credentials/…"
-                />
-              </FormField>
+              <SecretModeToggle mode={secretMode} onChange={setSecretMode} />
+              {secretMode === "managed" ? (
+                <FormField label="Secret (encrypted by Inhouse before storage; never shown again)">
+                  <TextInput
+                    type="password"
+                    autoComplete="off"
+                    value={secret}
+                    onChange={(e) => setSecret(e.target.value)}
+                    placeholder="Paste the provider secret"
+                  />
+                </FormField>
+              ) : (
+                <FormField label="Secret Reference (vault path / ID — never the raw secret)">
+                  <TextInput
+                    value={secretRef}
+                    onChange={(e) => setSecretRef(e.target.value)}
+                    placeholder="e.g. vault://inhouse/vendor-credentials/…"
+                  />
+                </FormField>
+              )}
               <div className="flex items-center gap-space-xs justify-end">
-                <Button variant="secondary" type="button" onClick={() => setRegisteringCredential(false)}>
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={() => {
+                    setRegisteringCredential(false);
+                    setSecret("");
+                    setSecretRef("");
+                  }}
+                >
                   Cancel
                 </Button>
-                <Button variant="primary" type="button" onClick={submitCredential} disabled={!secretRef}>
-                  Save Reference
+                <Button
+                  variant="primary"
+                  type="button"
+                  onClick={submitCredential}
+                  disabled={secretMode === "managed" ? !secret : !secretRef}
+                >
+                  Save Credential
                 </Button>
               </div>
             </div>
@@ -773,13 +893,50 @@ function VendorAccountsAndCredentials({
               </span>
               <Button variant="secondary" onClick={() => setRegisteringCredential(true)}>
                 <Icon name="key" size={16} />
-                Register Credential Reference
+                Add Credential
               </Button>
             </div>
           )}
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Chooses which of Block 08's two mutually-exclusive secret storage modes
+ * a credential write uses: the recommended INHOUSE-managed vault (the
+ * backend encrypts and stores the actual secret, AES-256-GCM — see
+ * docs/CREDENTIAL_VAULT.md) or an external reference the operator already
+ * manages elsewhere. Never both.
+ */
+function SecretModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: "managed" | "external";
+  onChange: (mode: "managed" | "external") => void;
+}) {
+  return (
+    <div className="flex items-center gap-space-xs bg-surface-container-low p-1 self-start">
+      {(
+        [
+          { key: "managed", label: "Inhouse Vault" },
+          { key: "external", label: "External Reference" },
+        ] as const
+      ).map((option) => (
+        <button
+          key={option.key}
+          type="button"
+          onClick={() => onChange(option.key)}
+          className={`font-code-dense text-code-dense uppercase px-space-sm py-1 transition-colors ${
+            mode === option.key ? "bg-primary text-on-primary" : "text-on-surface-variant hover:text-on-surface"
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
   );
 }
 

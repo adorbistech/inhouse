@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "./config/index.js";
+import type { CredentialVaultService } from "./lib/credentialVault.js";
 import { registerErrorHandling } from "./plugins/errorHandler.js";
 import { registerRequestContext } from "./plugins/requestContext.js";
 import { registerSecurity } from "./plugins/security.js";
@@ -22,6 +23,13 @@ export interface BuildAppOptions {
    * without a pool and never touch Postgres.
    */
   pool?: Pool;
+  /**
+   * Block 08 credential vault. Required whenever `pool` is provided — the
+   * Vendor System's credential routes always need it, so `buildApp` fails
+   * fast at construction time rather than deep inside a request if it's
+   * missing (see lib/credentialVault.ts).
+   */
+  credentialVault?: CredentialVaultService;
 }
 
 const REDACTED_PATHS = [
@@ -80,7 +88,12 @@ export async function buildApp(config: AppConfig, options: BuildAppOptions = {})
   registerHealthRoutes(app, config);
 
   if (options.pool) {
-    registerVendorRoutes(app, options.pool, config);
+    if (!options.credentialVault) {
+      throw new Error(
+        "buildApp: options.credentialVault is required whenever options.pool is provided (see src/lib/credentialVault.ts).",
+      );
+    }
+    registerVendorRoutes(app, options.pool, config, options.credentialVault);
     registerCapabilityRoutes(app, options.pool, config);
     registerWorkloadRoutes(app, options.pool, config);
     registerModelRoutes(app, options.pool, config);

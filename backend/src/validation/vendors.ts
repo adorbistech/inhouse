@@ -1,5 +1,5 @@
 import { ValidationError } from "../lib/httpErrors.js";
-import type { NewVendor, NewVendorAccount, VendorAccountPatch, VendorCredentialPatch, VendorPatch } from "../repositories/types.js";
+import type { NewVendor, NewVendorAccount, VendorAccountPatch, VendorPatch } from "../repositories/types.js";
 
 export const VENDOR_STATUSES = ["enabled", "disabled", "unavailable"] as const;
 export type VendorStatus = (typeof VENDOR_STATUSES)[number];
@@ -227,34 +227,74 @@ export function validateAccountPatchInput(body: unknown): VendorAccountPatch {
   return patch;
 }
 
+const MAX_SECRET_LENGTH = 10_000;
+
+/**
+ * A credential's secret arrives one of two ways (see docs/CREDENTIAL_VAULT.md):
+ * `secretRef` — a caller-supplied external reference, unchanged since
+ * Block 06 — or `secret` — the actual raw provider secret, which the
+ * service layer immediately encrypts via `CredentialVaultService` and
+ * never persists in this shape. Exactly one must be provided; accepting
+ * both would leave it ambiguous which mode the credential is in.
+ */
 export interface CreateCredentialInput {
   vendorAccountId: string;
   credential_type: string;
-  secret_ref: string;
+  secret_ref: string | null;
+  secret: string | null;
   status: VendorStatus;
+}
+
+function requireExactlyOneSecretMode(body: Record<string, unknown>): void {
+  const hasSecretRef = body.secretRef !== undefined;
+  const hasSecret = body.secret !== undefined;
+  if (hasSecretRef === hasSecret) {
+    throw new ValidationError('Exactly one of "secret" or "secretRef" must be provided.');
+  }
 }
 
 export function validateCreateCredentialInput(body: unknown): CreateCredentialInput {
   if (!isPlainObject(body)) {
     throw new ValidationError("Request body must be a JSON object.");
   }
+  requireExactlyOneSecretMode(body);
+  const hasSecret = body.secret !== undefined;
   return {
     vendorAccountId: requireUuidParam(body.vendorAccountId, "vendorAccountId"),
     credential_type: requireString(body.credentialType, "credentialType", { maxLength: 100 }),
-    secret_ref: requireString(body.secretRef, "secretRef", { maxLength: 500 }),
+    secret_ref: hasSecret ? null : requireString(body.secretRef, "secretRef", { maxLength: 500 }),
+    secret: hasSecret ? requireString(body.secret, "secret", { maxLength: MAX_SECRET_LENGTH }) : null,
     status: requireStatus(body.status ?? "enabled"),
   };
 }
 
-export function validateCredentialPatchInput(body: unknown): VendorCredentialPatch {
+/**
+ * Distinct from `VendorCredentialPatch` (the repository-level shape, which
+ * includes the encrypted columns) — this is the HTTP-facing shape. The
+ * service layer translates `secret`/`secretRef` into the encrypted/ref
+ * repository columns; neither the route nor this validator ever sees
+ * ciphertext.
+ */
+export interface UpdateCredentialInput {
+  credential_type?: string;
+  secret_ref?: string;
+  secret?: string;
+  status?: VendorStatus;
+}
+
+export function validateCredentialPatchInput(body: unknown): UpdateCredentialInput {
   if (!isPlainObject(body)) {
     throw new ValidationError("Request body must be a JSON object.");
   }
-  const patch: VendorCredentialPatch = {};
+  if (body.secretRef !== undefined && body.secret !== undefined) {
+    throw new ValidationError('Provide at most one of "secret" or "secretRef" when rotating a credential.');
+  }
+  const patch: UpdateCredentialInput = {};
   if (body.credentialType !== undefined) {
     patch.credential_type = requireString(body.credentialType, "credentialType", { maxLength: 100 });
   }
   if (body.secretRef !== undefined) patch.secret_ref = requireString(body.secretRef, "secretRef", { maxLength: 500 });
+  if (body.secret !== undefined) patch.secret = requireString(body.secret, "secret", { maxLength: MAX_SECRET_LENGTH });
   if (body.status !== undefined) patch.status = requireStatus(body.status);
   if (Object.keys(patch).length === 0) {
     throw new ValidationError("Request body must include at least one field to update.");

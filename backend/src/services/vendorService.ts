@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import { withTransaction, type Queryable } from "../db/client.js";
 import { ConflictError, NotFoundError, ValidationError } from "../lib/httpErrors.js";
+import type { CredentialVaultService, EncryptedSecret } from "../lib/credentialVault.js";
 import { AuditEventsRepository } from "../repositories/auditEventsRepository.js";
 import { CapabilitiesRepository } from "../repositories/capabilitiesRepository.js";
 import type {
@@ -19,7 +20,7 @@ import { VendorAccountsRepository } from "../repositories/vendorAccountsReposito
 import { VendorCredentialsRepository } from "../repositories/vendorCredentialsRepository.js";
 import { VendorsRepository } from "../repositories/vendorsRepository.js";
 import { WorkloadsRepository } from "../repositories/workloadsRepository.js";
-import type { CreateCredentialInput } from "../validation/vendors.js";
+import type { CreateCredentialInput, UpdateCredentialInput } from "../validation/vendors.js";
 
 export interface VendorDetail extends VendorRow {
   accounts: VendorAccountRow[];
@@ -54,7 +55,10 @@ export class VendorService {
   private readonly workloads: WorkloadsRepository;
   private readonly auditEvents: AuditEventsRepository;
 
-  constructor(private readonly pool: Pool) {
+  constructor(
+    private readonly pool: Pool,
+    private readonly vault: CredentialVaultService,
+  ) {
     this.vendors = new VendorsRepository(pool);
     this.accounts = new VendorAccountsRepository(pool);
     this.credentials = new VendorCredentialsRepository(pool);
@@ -323,14 +327,57 @@ export class VendorService {
     return this.credentials.listByVendorId(vendorId);
   }
 
+  /**
+   * Translates the HTTP-facing `secret`/`secretRef` choice into the
+   * repository's encrypted-column shape. Encryption happens here — the
+   * one seam between "raw secret just arrived over HTTP" and "only
+   * ciphertext ever reaches a query parameter or a response". The raw
+   * `secret` value is never retained beyond this call's stack frame.
+   */
+  private encodeSecretMode(
+    secretRef: string | null | undefined,
+    secret: string | null | undefined,
+  ): Pick<
+    VendorCredentialRow,
+    | "secret_ref"
+    | "secret_ciphertext"
+    | "secret_iv"
+    | "secret_auth_tag"
+    | "secret_fingerprint"
+    | "secret_masked"
+    | "secret_encryption_version"
+  > {
+    if (secret) {
+      const encrypted: EncryptedSecret = this.vault.encrypt(secret);
+      return {
+        secret_ref: null,
+        secret_ciphertext: encrypted.ciphertext,
+        secret_iv: encrypted.iv,
+        secret_auth_tag: encrypted.authTag,
+        secret_fingerprint: encrypted.fingerprint,
+        secret_masked: encrypted.maskedIdentifier,
+        secret_encryption_version: encrypted.version,
+      };
+    }
+    return {
+      secret_ref: secretRef ?? null,
+      secret_ciphertext: null,
+      secret_iv: null,
+      secret_auth_tag: null,
+      secret_fingerprint: null,
+      secret_masked: null,
+      secret_encryption_version: null,
+    };
+  }
+
   async createCredential(vendorId: string, input: CreateCredentialInput, ctx: AuditContext): Promise<VendorCredentialRow> {
     await this.getAccountOrThrow(vendorId, input.vendorAccountId);
     return withTransaction(this.pool, async (client) => {
       const credential = await new VendorCredentialsRepository(client).create({
         vendor_account_id: input.vendorAccountId,
         credential_type: input.credential_type,
-        secret_ref: input.secret_ref,
         status: input.status,
+        ...this.encodeSecretMode(input.secret_ref, input.secret),
       });
       await this.recordAudit(client, ctx, "vendor_credential.created", "vendor_credential", credential.id, {
         vendorId,
@@ -353,16 +400,23 @@ export class VendorService {
   async updateCredential(
     vendorId: string,
     credentialId: string,
-    patch: VendorCredentialPatch,
+    patch: UpdateCredentialInput,
     ctx: AuditContext,
   ): Promise<VendorCredentialRow> {
     await this.getCredentialOrThrow(vendorId, credentialId);
+    const isRotating = patch.secret !== undefined || patch.secret_ref !== undefined;
+    const repoPatch: VendorCredentialPatch = {
+      ...(patch.credential_type !== undefined ? { credential_type: patch.credential_type } : {}),
+      ...(patch.status !== undefined ? { status: patch.status } : {}),
+      ...(isRotating ? this.encodeSecretMode(patch.secret_ref, patch.secret) : {}),
+    };
     return withTransaction(this.pool, async (client) => {
-      const updated = await new VendorCredentialsRepository(client).update(credentialId, patch);
+      const updated = await new VendorCredentialsRepository(client).update(credentialId, repoPatch);
       if (!updated) {
         throw new NotFoundError(`Credential "${credentialId}" was not found.`);
       }
-      await this.recordAudit(client, ctx, "vendor_credential.updated", "vendor_credential", credentialId, {
+      const action = patch.status !== undefined ? `vendor_credential.${patch.status}` : isRotating ? "vendor_credential.rotated" : "vendor_credential.updated";
+      await this.recordAudit(client, ctx, action, "vendor_credential", credentialId, {
         vendorId,
         fields: Object.keys(patch),
       });

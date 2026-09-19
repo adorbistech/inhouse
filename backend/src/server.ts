@@ -1,13 +1,16 @@
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config/index.js";
+import { loadCredentialVaultKey } from "./config/credentialVault.js";
 import { createPool } from "./db/client.js";
 import { loadDbConfig } from "./db/config.js";
+import { CredentialVaultService } from "./lib/credentialVault.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const dbConfig = loadDbConfig();
   const pool = createPool(dbConfig);
-  const app = await buildApp(config, { pool });
+  const credentialVault = new CredentialVaultService(loadCredentialVaultKey());
+  const app = await buildApp(config, { pool, credentialVault });
 
   try {
     await app.listen({ host: config.host, port: config.port });

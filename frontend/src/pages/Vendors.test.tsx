@@ -188,6 +188,8 @@ describe("Vendors page", () => {
           credentialType: "api_key",
           status: "enabled",
           secretRef: "vault://secondary",
+          hasManagedSecret: false,
+          maskedSecret: null,
           createdAt: "2026-09-19T00:00:00Z",
           updatedAt: "2026-09-19T00:00:00Z",
           lastTestedAt: null,
@@ -216,5 +218,159 @@ describe("Vendors page", () => {
     await userEvent.click(screen.getByRole("button", { name: /^capabilities$/i }));
 
     expect(await screen.findByText(/no capabilities are defined/i)).toBeInTheDocument();
+  });
+});
+
+describe("Vendors page — Credential Vault (Block 08)", () => {
+  const primaryAccount = {
+    id: "acct_1",
+    vendorId: "vnd_1",
+    slug: "primary",
+    displayName: "Primary Account",
+    status: "enabled" as const,
+    externalAccountRef: null,
+    createdAt: "2026-09-19T00:00:00Z",
+    updatedAt: "2026-09-19T00:00:00Z",
+  };
+
+  function managedCredential(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "cred_managed",
+      vendorAccountId: "acct_1",
+      credentialType: "api_key",
+      status: "enabled" as const,
+      secretRef: null,
+      hasManagedSecret: true,
+      maskedSecret: "****...wxyz",
+      createdAt: "2026-09-19T00:00:00Z",
+      updatedAt: "2026-09-19T00:00:00Z",
+      lastTestedAt: null,
+      lastSuccessfulAt: null,
+      ...overrides,
+    };
+  }
+
+  async function openCredentialTabWithAccount() {
+    const vendor = sampleVendor();
+    const detail = toDetail(vendor, { accounts: [primaryAccount] });
+    vi.mocked(api.listVendors).mockResolvedValue({ vendors: [vendor] });
+    vi.mocked(api.getVendor).mockResolvedValue({ vendor: detail });
+    render(<Vendors />);
+    await screen.findByText("Test Vendor");
+    await userEvent.click(screen.getByRole("button", { name: /credential/i }));
+    return vendor;
+  }
+
+  test("an Inhouse-vault-managed credential displays only the masked value, never a raw secret", async () => {
+    vi.mocked(api.listCredentials).mockResolvedValue({ credentials: [managedCredential()] });
+    await openCredentialTabWithAccount();
+
+    expect(await screen.findByText(/\*\*\*\*\.\.\.wxyz/)).toBeInTheDocument();
+    expect(screen.getByText(/inhouse vault/i)).toBeInTheDocument();
+    expect(screen.queryByText("sk-raw-secret-value")).not.toBeInTheDocument();
+  });
+
+  test("Add Credential defaults to Inhouse Vault mode and the save button is disabled until a secret is entered", async () => {
+    await openCredentialTabWithAccount();
+    await screen.findByText(/no credential configured/i);
+
+    await userEvent.click(screen.getByRole("button", { name: /add credential/i }));
+
+    const saveButton = screen.getByRole("button", { name: /^save credential$/i });
+    expect(saveButton).toBeDisabled();
+
+    const secretInput = screen.getByPlaceholderText(/paste the provider secret/i);
+    expect(secretInput).toHaveAttribute("type", "password");
+
+    await userEvent.type(secretInput, "sk-raw-secret-value");
+    expect(saveButton).toBeEnabled();
+  });
+
+  test("submitting in Inhouse Vault mode calls createCredential with `secret`, never `secretRef`, and clears the field", async () => {
+    const vendor = await openCredentialTabWithAccount();
+    await screen.findByText(/no credential configured/i);
+    vi.mocked(api.createCredential).mockResolvedValue({ credential: managedCredential() });
+    vi.mocked(api.listCredentials).mockResolvedValue({ credentials: [managedCredential()] });
+
+    await userEvent.click(screen.getByRole("button", { name: /add credential/i }));
+    await userEvent.type(screen.getByPlaceholderText(/paste the provider secret/i), "sk-raw-secret-value");
+    await userEvent.click(screen.getByRole("button", { name: /^save credential$/i }));
+
+    await waitFor(() => expect(api.createCredential).toHaveBeenCalledTimes(1));
+    const [calledVendorId, payload] = vi.mocked(api.createCredential).mock.calls[0]!;
+    expect(calledVendorId).toBe(vendor.id);
+    expect(payload).toMatchObject({ vendorAccountId: "acct_1", credentialType: "api_key", secret: "sk-raw-secret-value" });
+    expect(payload).not.toHaveProperty("secretRef");
+
+    // The raw secret never lingers in the DOM after a successful save.
+    await waitFor(() => expect(screen.queryByPlaceholderText(/paste the provider secret/i)).not.toBeInTheDocument());
+    expect(screen.queryByText("sk-raw-secret-value")).not.toBeInTheDocument();
+  });
+
+  test("switching to External Reference mode calls createCredential with `secretRef`, never `secret`", async () => {
+    await openCredentialTabWithAccount();
+    await screen.findByText(/no credential configured/i);
+    vi.mocked(api.createCredential).mockResolvedValue({
+      credential: managedCredential({ hasManagedSecret: false, maskedSecret: null, secretRef: "vault://external/path" }),
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /add credential/i }));
+    await userEvent.click(screen.getByRole("button", { name: /external reference/i }));
+
+    const saveButton = screen.getByRole("button", { name: /^save credential$/i });
+    expect(saveButton).toBeDisabled();
+
+    await userEvent.type(screen.getByPlaceholderText(/vault:\/\/inhouse/i), "vault://external/path");
+    expect(saveButton).toBeEnabled();
+    await userEvent.click(saveButton);
+
+    await waitFor(() => expect(api.createCredential).toHaveBeenCalledTimes(1));
+    const payload = vi.mocked(api.createCredential).mock.calls[0]![1];
+    expect(payload).toMatchObject({ vendorAccountId: "acct_1", credentialType: "api_key", secretRef: "vault://external/path" });
+    expect(payload).not.toHaveProperty("secret");
+  });
+
+  test("Rotate Secret submits a new managed secret via updateCredential and clears the field", async () => {
+    vi.mocked(api.listCredentials).mockResolvedValue({ credentials: [managedCredential()] });
+    const vendor = await openCredentialTabWithAccount();
+    await screen.findByText(/\*\*\*\*\.\.\.wxyz/);
+    vi.mocked(api.updateCredential).mockResolvedValue({
+      credential: managedCredential({ maskedSecret: "****...9999" }),
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /rotate secret/i }));
+    await userEvent.type(screen.getByPlaceholderText(/paste the new provider secret/i), "sk-rotated-secret");
+    await userEvent.click(screen.getByRole("button", { name: /^save new secret$/i }));
+
+    await waitFor(() => expect(api.updateCredential).toHaveBeenCalledWith(vendor.id, "cred_managed", { secret: "sk-rotated-secret" }));
+    await waitFor(() => expect(screen.queryByPlaceholderText(/paste the new provider secret/i)).not.toBeInTheDocument());
+    expect(screen.queryByText("sk-rotated-secret")).not.toBeInTheDocument();
+  });
+
+  test("the Disable/Enable control toggles credential status via updateCredential", async () => {
+    vi.mocked(api.listCredentials).mockResolvedValue({ credentials: [managedCredential()] });
+    const vendor = await openCredentialTabWithAccount();
+    await screen.findByText(/\*\*\*\*\.\.\.wxyz/);
+    vi.mocked(api.updateCredential).mockResolvedValue({ credential: managedCredential({ status: "disabled" }) });
+
+    await userEvent.click(screen.getByRole("button", { name: /^disable$/i }));
+
+    await waitFor(() =>
+      expect(api.updateCredential).toHaveBeenCalledWith(vendor.id, "cred_managed", { status: "disabled" }),
+    );
+  });
+
+  test("a failed credential creation surfaces the API error message without crashing", async () => {
+    await openCredentialTabWithAccount();
+    await screen.findByText(/no credential configured/i);
+    vi.mocked(api.createCredential).mockRejectedValue(
+      new ApiError(400, "VALIDATION_ERROR", 'Exactly one of "secret" or "secretRef" must be provided.', "req-3"),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /add credential/i }));
+    await userEvent.type(screen.getByPlaceholderText(/paste the provider secret/i), "sk-raw-secret-value");
+    await userEvent.click(screen.getByRole("button", { name: /^save credential$/i }));
+
+    expect(await screen.findByText(/exactly one of "secret" or "secretref" must be provided/i)).toBeInTheDocument();
   });
 });

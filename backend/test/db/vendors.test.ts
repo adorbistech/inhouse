@@ -218,12 +218,19 @@ test("credential metadata CRUD never returns raw secret material", async () => {
         "lastSuccessfulAt",
         "lastTestedAt",
         "secretRef",
+        "hasManagedSecret",
+        "maskedSecret",
         "status",
         "updatedAt",
         "vendorAccountId",
         "createdAt",
       ].sort(),
     );
+    // hasManagedSecret/maskedSecret (Block 08) describe an INHOUSE-vault-managed
+    // secret without exposing it; both are null/false here since this
+    // credential uses an external secretRef, not a managed secret.
+    assert.equal(credential.hasManagedSecret, false);
+    assert.equal(credential.maskedSecret, null);
     // secretRef is a reference string, not raw provider-secret material — and
     // no other field on the response could ever carry a raw secret because
     // the response is built from an explicit whitelist (toCredentialResponse).

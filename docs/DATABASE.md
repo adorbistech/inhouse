@@ -1,4 +1,4 @@
-# Inhouse Database (Block 05 — Persistence Foundation, extended in Block 06 and Block 07)
+# Inhouse Database (Block 05 — Persistence Foundation, extended in Block 06, Block 07, and Block 08)
 
 ## Status
 
@@ -6,10 +6,13 @@ Block 05 established **persistence only** (no API surface over it). Block
 06 added the first real data-driven service on top of it — the Vendor
 System (`docs/API.md`) — plus a schema extension (migration `0010`) for
 vendor-level priority, retry flags, and capability/workload assignment.
-Block 07 adds a second data-driven service, the Model Catalog
+Block 07 added a second data-driven service, the Model Catalog
 (`docs/API.md`), entirely on Block 05's existing `models` /
-`model_capabilities` / `model_workloads` tables — **no new migration was
-required.**
+`model_capabilities` / `model_workloads` tables — no new migration was
+required. **Block 08 extends `vendor_credentials` (migration `0011`)
+with a real, INHOUSE-managed authenticated-encryption vault** — see
+`docs/CREDENTIAL_VAULT.md` for the full design; this document covers the
+schema change only.
 Still not implemented, in any block so far:
 
 - provider integrations (real calls to a vendor's API)
@@ -129,6 +132,20 @@ existing was altered or renamed; this is purely additive (`ALTER TABLE
 ... ADD COLUMN`, two new `CREATE TABLE`s), applied as one migration file,
 transactional and repeat-safe like every other migration here.
 
+**Block 08 migration:** `0011_vendor_credential_secret_vault.sql` makes
+`vendor_credentials.secret_ref` nullable and adds six columns
+(`secret_ciphertext`, `secret_iv`, `secret_auth_tag`, `secret_fingerprint`,
+`secret_masked`, `secret_encryption_version`) plus two `CHECK` constraints
+that together enforce "exactly one secret storage mode" *at the database
+layer*, not just in application code — see "Credential Vault" below and
+`docs/CREDENTIAL_VAULT.md` for the full design. Why extend
+`vendor_credentials` rather than add a new table: it already existed
+specifically as the landing spot for this ("the vault/encryption
+mechanism itself belongs to a later block" — Block 05's original
+comment); a second, parallel credential table would have duplicated the
+vendor-account relationship and lifecycle logic that already exist here.
+Existing rows (all `secret_ref`-mode) remain valid without a backfill.
+
 ## Schema — Entities
 
 All tables include `created_at`/`updated_at` (UTC, `TIMESTAMPTZ`, default
@@ -146,10 +163,14 @@ All tables include `created_at`/`updated_at` (UTC, `TIMESTAMPTZ`, default
   capabilities a vendor advertises and which workloads it may serve, as
   data. Distinct from `model_capabilities`/`model_workloads`, which
   describe a *model's* capabilities/workloads, not a vendor's.
-- **vendor_credentials** — credential *metadata only* (`secret_ref`,
-  status, last tested/successful). **Never a plaintext secret column.**
-  The actual vault/encryption mechanism is a later block; this table only
-  tracks lifecycle state for a credential that lives elsewhere.
+- **vendor_credentials** — credential lifecycle (status, last
+  tested/successful) plus its secret, in exactly one of two mutually
+  exclusive modes (enforced by a `CHECK` constraint — Block 08, migration
+  `0011`): a caller-supplied external `secret_ref` (Block 05/06, unchanged
+  — never a secret itself), or INHOUSE-vault-managed encrypted material
+  (`secret_ciphertext`/`secret_iv`/`secret_auth_tag`, AES-256-GCM).
+  **Never a plaintext secret column, in either mode.** Full design in
+  `docs/CREDENTIAL_VAULT.md`.
 - **models** — provider model identifiers mapped to an Inhouse alias, per
   vendor. No provider/model names are seeded. `(vendor_id,
   provider_model_id)` and `inhouse_alias` are both unique. CRUD over this
@@ -252,25 +273,29 @@ restarts/recreations. A backup/restore strategy (e.g. `pg_dump` on a
 schedule) is deferred to a later block once there is real data worth
 protecting.
 
-## What Block 05 Did *Not* Implement (superseded where Block 06/07 adds it)
+## What Block 05 Did *Not* Implement (superseded where Block 06/07/08 adds it)
 
 - ~~HTTP CRUD routes over any of these tables~~ — Block 06 adds the
   Vendor System's CRUD API over `vendors`, `vendor_accounts`,
-  `vendor_credentials` (metadata only), `capabilities`, and `workloads`.
-  Block 07 adds the Model Catalog's CRUD API over `models`, plus
-  capability/workload assignment (`model_capabilities`/
-  `model_workloads`). See `docs/API.md`.
-- Provider integrations or a credential vault/encryption mechanism —
-  still not implemented.
+  `vendor_credentials`, `capabilities`, and `workloads`. Block 07 adds
+  the Model Catalog's CRUD API over `models`, plus capability/workload
+  assignment (`model_capabilities`/`model_workloads`). See `docs/API.md`.
+- ~~A credential vault/encryption mechanism~~ — Block 08 adds it:
+  `vendor_credentials` can now store a real provider secret, encrypted at
+  rest (AES-256-GCM) by INHOUSE itself. See `docs/CREDENTIAL_VAULT.md`.
+  **Provider integrations themselves are still not implemented** — Block
+  08 only builds the storage/decrypt boundary; nothing calls a provider
+  with a decrypted secret yet.
 - Model execution or a routing engine — still not implemented; Block
   06/07 persist routing-*adjacent* configuration (vendor priority/retry
   flags, which capabilities/workloads a model supports) but nothing
   executes it.
 - API authentication (issuing/validating `inhouse_api_keys`) — still not
-  implemented.
+  implemented. (Not to be confused with Block 08's credential vault,
+  which protects *provider* secrets, not Inhouse API access.)
 - Claude Code integration — still not implemented.
 - Cost/pricing calculation or any pricing seed data — still not
   implemented.
 - Seed data for any real vendor, model, or provider name — still true in
-  Block 07: no vendor or model is created except through the API, by an
-  operator.
+  Block 08: no vendor, model, or credential is created except through the
+  API, by an operator.

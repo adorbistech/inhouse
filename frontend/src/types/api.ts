@@ -39,13 +39,22 @@ export interface VendorAccountApi {
   updatedAt: string;
 }
 
+/**
+ * A credential uses exactly one secret storage mode (Block 08 — see
+ * docs/CREDENTIAL_VAULT.md): either `secretRef` (a caller-supplied
+ * external reference — never a secret itself, unchanged since Block 06)
+ * or an INHOUSE-vault-managed secret, indicated by `hasManagedSecret` and
+ * displayed only as `maskedSecret`. The raw/encrypted secret value is
+ * never part of this type — no API response ever includes it.
+ */
 export interface VendorCredentialApi {
   id: string;
   vendorAccountId: string;
   credentialType: string;
   status: VendorStatus;
-  /** A reference (e.g. a vault path), never a plaintext provider secret. */
-  secretRef: string;
+  secretRef: string | null;
+  hasManagedSecret: boolean;
+  maskedSecret: string | null;
   createdAt: string;
   updatedAt: string;
   lastTestedAt: string | null;

@@ -39,6 +39,9 @@ services:
       INHOUSE_DB_POOL_MIN: ${INHOUSE_DB_POOL_MIN:-2}
       INHOUSE_DB_POOL_MAX: ${INHOUSE_DB_POOL_MAX:-10}
       INHOUSE_DB_SSL: ${INHOUSE_DB_SSL:-false}
+      # Block 08 — no default; the container fails fast at startup without
+      # it, same as INHOUSE_DB_PASSWORD. See docs/CREDENTIAL_VAULT.md.
+      INHOUSE_CREDENTIAL_ENCRYPTION_KEY: ${INHOUSE_CREDENTIAL_ENCRYPTION_KEY}
     ports:
       - "127.0.0.1:${INHOUSE_API_PORT:-8092}:${INHOUSE_API_PORT:-8092}"
     networks:

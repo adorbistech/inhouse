@@ -1,4 +1,4 @@
-# Inhouse API (Block 04 — Foundation, persistence added in Block 05, Vendor System added in Block 06, Model Catalog added in Block 07)
+# Inhouse API (Block 04 — Foundation, persistence added in Block 05, Vendor System added in Block 06, Model Catalog added in Block 07, Credential Vault added in Block 08)
 
 ## Status
 
@@ -10,25 +10,32 @@ call it yet and this document does not cover it.
 Block 05 added a PostgreSQL persistence layer (SQL migrations, a
 dedicated Inhouse schema, and typed repositories — see
 `docs/DATABASE.md`); at that point no HTTP route used it yet. **Block 06
-changed that for one domain: the Vendor System. Block 07 adds a second:
-the Model Catalog.** The distinction that matters going forward:
+changed that for one domain: the Vendor System. Block 07 added a second:
+the Model Catalog. Block 08 extends the Vendor System's credential
+endpoints with a real, INHOUSE-managed secret vault** (see "Credential
+Vault (Block 08)" below and `docs/CREDENTIAL_VAULT.md`). The distinction
+that matters going forward:
 
 - **Persistence exists and is now reachable over HTTP** for vendors,
-  vendor accounts, vendor credential metadata, models, capabilities, and
-  workloads (see "Vendor System" and "Model Catalog" below) — real
-  reads/writes through the Block 05/06/07 schema and repositories.
+  vendor accounts, vendor credentials (now optionally INHOUSE-vault-managed
+  — see below), models, capabilities, and workloads (see "Vendor System"
+  and "Model Catalog" below) — real reads/writes through the
+  Block 05/06/07/08 schema and repositories.
 - **`/health` and `/ready` (and their `/v1` equivalents) remain
   database-free by design** — they never depend on the database, so they
   stay reliable as liveness/readiness probes regardless of the database's
-  state. This did not change in Block 06 or Block 07.
+  state. This did not change in Block 06, 07, or 08.
 - **No route executes a provider call, routing decision, or model
   execution.** The Vendor System and Model Catalog persist *configuration*
   (including routing-adjacent fields like priority and retry conditions,
   and which capabilities/workloads a model supports) — nothing reads that
-  configuration to actually route or execute a request yet.
+  configuration to actually route or execute a request yet. Block 08 does
+  not decrypt a credential from any route, either — see "Credential Vault
+  (Block 08)".
 - **No route implements authentication.** Every endpoint below, including
   the Vendor System and Model Catalog, is unauthenticated in this block
-  (see "Authentication").
+  (see "Authentication"). Block 08's vault protects *provider* credentials
+  at rest; it is not Inhouse API authentication.
 
 ## Service Purpose
 
@@ -135,26 +142,53 @@ enforced by request validation, not a database constraint (see
 A vendor may have multiple accounts; nothing in this API assumes a fixed
 `accounts[0]` — every account has its own id, slug, and status.
 
-### Vendor Credentials — metadata only, never a secret
+### Vendor Credentials — Credential Vault (Block 08)
 
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/v1/vendors/:id/credentials` | All credentials across every account belonging to the vendor |
-| `POST` | `/v1/vendors/:id/credentials` | Body: `{ vendorAccountId, credentialType, secretRef }` — see below |
-| `PATCH` | `/v1/vendors/:id/credentials/:credentialId` | |
+| `POST` | `/v1/vendors/:id/credentials` | Body: `{ vendorAccountId, credentialType, secret }` **or** `{ vendorAccountId, credentialType, secretRef }` — exactly one of `secret`/`secretRef`, see below |
+| `PATCH` | `/v1/vendors/:id/credentials/:credentialId` | Partial update; `secret`/`secretRef`/`status`/`credentialType`, at most one of `secret`/`secretRef` — see "Rotation" |
 | `DELETE` | `/v1/vendors/:id/credentials/:credentialId` | **Hard delete** — safe, since no other table references a credential by id |
 
-**`secretRef` is a reference (e.g. a vault path or external secret-manager
-ID), never a plaintext provider API key, bearer token, or password.**
-This endpoint never accepts and never returns raw secret material — the
-response shape is an explicit whitelist (`id`, `vendorAccountId`,
-`credentialType`, `status`, `secretRef`, `createdAt`, `updatedAt`,
-`lastTestedAt`, `lastSuccessfulAt`) that cannot grow to include a secret
-column by accident. Registering a credential is intentionally a separate
-action from creating a vendor — this API never asks for a provider secret
-as part of `POST /v1/vendors`. There is no "test connection against the
-provider" endpoint in this block; that requires a real provider adapter
-(a later block).
+**Two mutually exclusive secret storage modes**, chosen by which field the
+caller sends (full detail, threat model, and the encryption design are in
+`docs/CREDENTIAL_VAULT.md`):
+
+- **`secret`** — the actual raw provider credential (an API key, bearer
+  token, etc.). The backend encrypts it immediately (AES-256-GCM, a fresh
+  nonce every time) and stores only the ciphertext — the raw value is
+  **never** persisted, logged, or echoed back in any response.
+- **`secretRef`** — a caller-supplied external reference (e.g. a path into
+  an external vault/secret manager). This is the unchanged Block 06
+  behavior: never a secret itself, just a pointer to one that lives
+  elsewhere.
+
+Sending both, or neither, is a `400 VALIDATION_ERROR`.
+
+**The response is an explicit safe whitelist** — `id`, `vendorAccountId`,
+`credentialType`, `status`, `secretRef` (null when the credential uses a
+managed secret), `hasManagedSecret` (boolean), `maskedSecret` (a display
+string like `****...ab12`, null when using `secretRef`), `createdAt`,
+`updatedAt`, `lastTestedAt`, `lastSuccessfulAt`. **No response, at any
+endpoint, ever includes ciphertext, an IV, an auth tag, a fingerprint, or
+a raw secret.** There is no `GET .../secret` or `.../decrypt` endpoint —
+decryption is reserved for a narrow, route-inaccessible internal function
+(`services/credentialSecretAccess.ts`) that a later trusted execution
+path (a provider adapter) will call; nothing in Block 08 calls it itself.
+
+**Rotation**: sending `secret` or `secretRef` in a `PATCH` replaces the
+credential's stored secret material atomically (within one transaction —
+the old material is never left half-replaced) and is recorded as
+`vendor_credential.rotated`, distinct from a plain field update. Rotating
+can also switch modes (e.g. from a managed secret to an external
+`secretRef`, or back).
+
+Registering a credential is intentionally a separate action from creating
+a vendor — this API never asks for a provider secret as part of
+`POST /v1/vendors`. There is no "test connection against the provider"
+endpoint in this block; that requires a real provider adapter (a later
+block).
 
 ### Reference Data
 
@@ -184,8 +218,10 @@ are recorded to `audit_events` (`vendor.created`, `vendor.updated`,
 `vendor.workloads_updated`, `vendor_account.created`,
 `vendor_account.updated`, `vendor_account.disabled`,
 `vendor_credential.created`, `vendor_credential.updated`,
-`vendor_credential.deleted`). Audit metadata never includes a secret
-value or a `secretRef`.
+`vendor_credential.rotated`, `vendor_credential.enabled`,
+`vendor_credential.disabled`, `vendor_credential.deleted`). Audit
+metadata never includes a secret value, ciphertext, an encryption key, or
+a `secretRef`.
 
 ## Model Catalog (Block 07)
 
@@ -298,7 +334,10 @@ running in an undefined state.
 
 The Vendor System additionally requires the `INHOUSE_DB_*` variables
 documented in `docs/DATABASE.md` — the process fails fast at startup if
-`INHOUSE_DB_PASSWORD` is missing, for the same fail-fast reason.
+`INHOUSE_DB_PASSWORD` is missing, for the same fail-fast reason. Block 08
+adds `INHOUSE_CREDENTIAL_ENCRYPTION_KEY` (the credential vault's master
+key), required for the same reason whenever the database-backed routes
+are enabled — see `docs/CREDENTIAL_VAULT.md`.
 
 ## Authentication
 

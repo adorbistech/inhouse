@@ -4,6 +4,12 @@ import type { NewVendorCredential, VendorCredentialPatch, VendorCredentialRow } 
 const CREDENTIAL_PATCH_COLUMNS = [
   "credential_type",
   "secret_ref",
+  "secret_ciphertext",
+  "secret_iv",
+  "secret_auth_tag",
+  "secret_fingerprint",
+  "secret_masked",
+  "secret_encryption_version",
   "status",
 ] as const satisfies readonly (keyof VendorCredentialPatch)[];
 
@@ -12,10 +18,25 @@ export class VendorCredentialsRepository {
 
   async create(credential: NewVendorCredential): Promise<VendorCredentialRow> {
     const result = await this.db.query<VendorCredentialRow>(
-      `INSERT INTO vendor_credentials (vendor_account_id, credential_type, secret_ref, status)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO vendor_credentials (
+         vendor_account_id, credential_type, status,
+         secret_ref, secret_ciphertext, secret_iv, secret_auth_tag,
+         secret_fingerprint, secret_masked, secret_encryption_version
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
-      [credential.vendor_account_id, credential.credential_type, credential.secret_ref, credential.status],
+      [
+        credential.vendor_account_id,
+        credential.credential_type,
+        credential.status,
+        credential.secret_ref,
+        credential.secret_ciphertext,
+        credential.secret_iv,
+        credential.secret_auth_tag,
+        credential.secret_fingerprint,
+        credential.secret_masked,
+        credential.secret_encryption_version,
+      ],
     );
     return expectRow(result.rows);
   }

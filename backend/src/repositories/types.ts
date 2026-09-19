@@ -31,7 +31,20 @@ export type VendorPatch = Partial<NewVendor>;
 
 export type VendorAccountPatch = Partial<Omit<NewVendorAccount, "vendor_id">>;
 
-export type VendorCredentialPatch = Partial<Pick<VendorCredentialRow, "credential_type" | "secret_ref" | "status">>;
+export type VendorCredentialPatch = Partial<
+  Pick<
+    VendorCredentialRow,
+    | "credential_type"
+    | "secret_ref"
+    | "secret_ciphertext"
+    | "secret_iv"
+    | "secret_auth_tag"
+    | "secret_fingerprint"
+    | "secret_masked"
+    | "secret_encryption_version"
+    | "status"
+  >
+>;
 
 export interface VendorAccountRow {
   id: string;
@@ -46,11 +59,31 @@ export interface VendorAccountRow {
 
 export type NewVendorAccount = Omit<VendorAccountRow, "id" | "created_at" | "updated_at">;
 
+/**
+ * A credential uses exactly one secret storage mode (enforced by a DB
+ * CHECK constraint, migration 0011 — see docs/CREDENTIAL_VAULT.md):
+ *
+ * - `secret_ref` set, encrypted columns all null — a caller-supplied
+ *   reference into an *external* vault/secret manager. Never a secret
+ *   itself (Block 05/06 behavior, unchanged).
+ * - `secret_ref` null, encrypted columns all set — INHOUSE's own
+ *   authenticated-encryption vault holds the actual provider secret
+ *   (Block 08). `secret_ciphertext`/`secret_iv`/`secret_auth_tag` are
+ *   never serialized to an API response; only `secret_masked` is safe to
+ *   display, and only a trusted backend path may decrypt (see
+ *   `services/credentialSecretAccess.ts`).
+ */
 export interface VendorCredentialRow {
   id: string;
   vendor_account_id: string;
   credential_type: string;
-  secret_ref: string;
+  secret_ref: string | null;
+  secret_ciphertext: Buffer | null;
+  secret_iv: Buffer | null;
+  secret_auth_tag: Buffer | null;
+  secret_fingerprint: string | null;
+  secret_masked: string | null;
+  secret_encryption_version: number | null;
   status: string;
   created_at: Date;
   updated_at: Date;

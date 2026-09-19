@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config/index.js";
+import type { CredentialVaultService } from "../lib/credentialVault.js";
+import type { VendorCredentialRow } from "../repositories/types.js";
 import { VendorService } from "../services/vendorService.js";
 import {
   validateAccountPatchInput,
@@ -21,28 +23,24 @@ import {
 } from "./serializers.js";
 
 /**
- * Never returns raw secret material — only credential metadata. This is
- * the one explicit projection point that keeps `secret_ref` (a reference,
- * never a plaintext provider secret) out of any accidental future column
- * addition from leaking: only the fields listed here ever leave the API.
+ * Never returns raw secret material — only safe credential metadata. This
+ * is the one explicit projection point that keeps everything in
+ * `VendorCredentialRow` (including `secret_ciphertext`/`secret_iv`/
+ * `secret_auth_tag`/`secret_fingerprint` — see repositories/types.ts) out
+ * of any accidental future leak: only the fields listed here ever leave
+ * the API. `secretRef` is the unchanged Block 06 external reference;
+ * `maskedSecret`/`hasManagedSecret` describe an INHOUSE-vault-managed
+ * secret (Block 08) without ever exposing it.
  */
-function toCredentialResponse(credential: {
-  id: string;
-  vendor_account_id: string;
-  credential_type: string;
-  status: string;
-  secret_ref: string;
-  created_at: Date;
-  updated_at: Date;
-  last_tested_at: Date | null;
-  last_successful_at: Date | null;
-}) {
+function toCredentialResponse(credential: VendorCredentialRow) {
   return {
     id: credential.id,
     vendorAccountId: credential.vendor_account_id,
     credentialType: credential.credential_type,
     status: credential.status,
     secretRef: credential.secret_ref,
+    hasManagedSecret: credential.secret_ciphertext !== null,
+    maskedSecret: credential.secret_masked,
     createdAt: credential.created_at,
     updatedAt: credential.updated_at,
     lastTestedAt: credential.last_tested_at,
@@ -56,8 +54,13 @@ function auditContext(request: FastifyRequest) {
   return { actorId: null, requestId: request.id };
 }
 
-export function registerVendorRoutes(app: FastifyInstance, pool: Pool, config: AppConfig): void {
-  const service = new VendorService(pool);
+export function registerVendorRoutes(
+  app: FastifyInstance,
+  pool: Pool,
+  config: AppConfig,
+  credentialVault: CredentialVaultService,
+): void {
+  const service = new VendorService(pool, credentialVault);
 
   app.register(
     async (versioned) => {

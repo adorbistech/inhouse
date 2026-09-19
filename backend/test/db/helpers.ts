@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,19 @@ import { runMigrations } from "../../src/db/migrate.js";
 import type { Queryable } from "../../src/db/client.js";
 import { buildApp } from "../../src/app.js";
 import { loadConfig } from "../../src/config/index.js";
+import { CredentialVaultService } from "../../src/lib/credentialVault.js";
+
+/**
+ * A fresh, random, in-memory-only key per test run — never written to
+ * disk, never committed, never shared with a real deployment's key. Every
+ * `withMigratedApp` call in a given process shares this one instance
+ * (encryption keys don't need to differ per test; determinism isn't
+ * required since nothing here asserts a fixed ciphertext). Exported so
+ * tests that need to decrypt directly (e.g. via
+ * `services/credentialSecretAccess.ts`) can construct a
+ * `CredentialVaultService` with the same key the test app is using.
+ */
+export const TEST_VAULT_KEY = randomBytes(32).toString("hex");
 
 const STATE_FILE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -111,7 +125,10 @@ export async function withMigratedApp<T>(
     options: `-c search_path=${config.schema},public`,
     max: 5,
   });
-  const app = await buildApp(loadConfig({ INHOUSE_API_ENV: "test" } as NodeJS.ProcessEnv), { pool });
+  const app = await buildApp(loadConfig({ INHOUSE_API_ENV: "test" } as NodeJS.ProcessEnv), {
+    pool,
+    credentialVault: new CredentialVaultService(TEST_VAULT_KEY),
+  });
   try {
     return await fn(app, pool, config);
   } finally {

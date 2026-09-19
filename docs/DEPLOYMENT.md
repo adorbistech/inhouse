@@ -1,16 +1,18 @@
-# Inhouse — Deployment Foundation (Block 03, extended in Block 04, Block 05, and Block 06)
+# Inhouse — Deployment Foundation (Block 03, extended in Block 04, Block 05, Block 06, and Block 08)
 
 ## Status
 
 Frontend, backend/API, and database deployment foundations exist. See
 `docs/API.md` for the backend's API contract (including the Block 06
 Vendor System) and `docs/DATABASE.md` for the persistence foundation
-added in Block 05 and extended in Block 06.
+added in Block 05 and extended in Block 06/08.
 
-**Block 06 made no deployment/Docker changes** — no new service, port,
-network, or volume. It only added application code (routes, a schema
-migration) on top of the Block 03–05 deployment foundation, which is
-unchanged.
+**Block 06 and Block 07 made no deployment/Docker changes** — no new
+service, port, network, or volume; only application code (routes, and in
+Block 06's case a schema migration) on top of the Block 03–05 deployment
+foundation. **Block 08 makes one deployment change**: `inhouse-api` now
+requires a new environment variable, `INHOUSE_CREDENTIAL_ENCRYPTION_KEY`
+— see "Credential Vault (Block 08)" below.
 
 ## VPS Discovery (read-only, recorded at time of Block 03 Prompt 1)
 
@@ -210,6 +212,26 @@ configuration variables are documented in full in `docs/API.md`.
   counts (`adorbis-api`: 12, `timespace`: 1) and the existing Docker
   container list were identical before and after.
 
+## Credential Vault (Block 08)
+
+- No new Docker service, port, network, or volume. The only change to
+  `docker-compose.yml` is one new environment passthrough on `inhouse-api`:
+  `INHOUSE_CREDENTIAL_ENCRYPTION_KEY: ${INHOUSE_CREDENTIAL_ENCRYPTION_KEY}`
+  — no default, mirroring `INHOUSE_DB_PASSWORD`.
+- **This is a real deployment requirement**: `inhouse-api` now fails fast
+  at startup if this variable is missing or not a 64-character hex string
+  (32 bytes) — see `docs/CREDENTIAL_VAULT.md`. Generate one with
+  `openssl rand -hex 32` and store it in the deployment's `.env` the same
+  way `INHOUSE_DB_PASSWORD` already is — never committed, never logged.
+- Full design (encryption scheme, key handling, secret access boundary,
+  operational rotation expectations) is in `docs/CREDENTIAL_VAULT.md`;
+  this section covers the deployment/Docker change only.
+- **Verified:** `docker compose build inhouse-api` succeeds with no new
+  dependency (AES-256-GCM uses Node's built-in `node:crypto`, already
+  available — no package added); the backend fails fast with a clear
+  error when `INHOUSE_CREDENTIAL_ENCRYPTION_KEY` is unset, exactly like
+  the existing `INHOUSE_DB_PASSWORD` check.
+
 ## Security Verification
 
 - `.env`, `*.pem`, `*.key`, `secrets/`, `credentials/`, `node_modules/`,
@@ -236,6 +258,14 @@ configuration variables are documented in full in `docs/API.md`.
   database's password (`backend/scripts/testDb.ts`) is a fixed,
   clearly-labeled non-secret string scoped to a container that only ever
   exists on loopback for the duration of `npm run test:db`.
+- Backend secret scan (Block 08): no real encryption key, provider
+  secret, or ciphertext appears anywhere under `backend/src`,
+  `backend/test`, or `.env.example`. `INHOUSE_CREDENTIAL_ENCRYPTION_KEY`
+  has no default anywhere in source — a missing or malformed value fails
+  startup. Test-only encryption keys (`backend/test/db/helpers.ts`,
+  `backend/test/credentialVault.test.ts`) are generated at random via
+  `node:crypto`'s `randomBytes` at test-run time — never a fixed or
+  committed value.
 
 ## Isolation Verification
 
