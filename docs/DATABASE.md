@@ -1,4 +1,4 @@
-# Inhouse Database (Block 05 — Persistence Foundation, extended in Block 06, Block 07, Block 08, and Block 09)
+# Inhouse Database (Block 05 — Persistence Foundation, extended in Block 06, Block 07, Block 08, Block 09, and Block 11)
 
 ## Status
 
@@ -22,7 +22,14 @@ existing `vendors`/`vendor_accounts`/`vendor_credentials`/`models`
 schema already fully represents provider identity, protocol, endpoint,
 accounts, credentials, and models; the protocol → adapter mapping it adds
 is code (`backend/src/services/adapters/adapterRegistry.ts`), never a
-table. See `docs/PROVIDER_ADAPTERS.md`.
+table. See `docs/PROVIDER_ADAPTERS.md`. **Block 11 also adds no schema
+change** — inspection confirmed `routing_tiers`/`routing_fallback_rules`
+(migration `0006`, Block 05) already carry everything a routing policy
+layer needs; `RoutingRepository` only gained ordinary
+update/enable-disable methods over those same two tables (`updateTier`,
+`setTierEnabled`, `findFallbackRuleById`, `updateFallbackRule`,
+`setFallbackRuleEnabled`), mirroring `VendorsRepository`'s existing
+patch-column-whitelist pattern. See `docs/ROUTING_POLICY.md`.
 
 Still not implemented, in any block so far:
 
@@ -31,8 +38,10 @@ Still not implemented, in any block so far:
   `"openai-compatible"` protocol), but nothing in this codebase calls it
   from a route yet. See `docs/PROVIDER_ADAPTERS.md`.
 - model execution
-- a routing engine (routing *configuration* is persisted; nothing
-  executes it)
+- ~~a routing engine~~ — Block 11 adds a routing *policy* layer that can
+  compute and explain a deterministic dry-run decision
+  (`docs/ROUTING_POLICY.md`), but still cannot act on it: no fallback
+  execution, no retry execution, no provider call.
 - API authentication
 - Claude Code integration
 - accounting/cost calculations

@@ -1,12 +1,15 @@
 import type {
   CapabilityRow,
   ModelRow,
+  RoutingFallbackRuleRow,
+  RoutingTierRow,
   VendorAccountHealthEventRow,
   VendorAccountHealthRow,
   VendorAccountRow,
   VendorRow,
   WorkloadRow,
 } from "../repositories/types.js";
+import type { RoutingDecision } from "../services/routingService.js";
 import type { ModelDetail } from "../services/modelService.js";
 import type { VendorDetail } from "../services/vendorService.js";
 
@@ -154,6 +157,51 @@ export function toProviderHealthResponse(vendorAccountId: string, health: Vendor
     lastErrorCategory: health.last_error_category,
     lastSafeErrorCode: health.last_safe_error_code,
   };
+}
+
+export function toRoutingTierResponse(tier: RoutingTierRow) {
+  return {
+    id: tier.id,
+    workloadId: tier.workload_id,
+    tierNumber: tier.tier_number,
+    vendorId: tier.vendor_id,
+    modelId: tier.model_id,
+    priority: tier.priority,
+    enabled: tier.enabled,
+    timeoutOverrideMs: tier.timeout_override_ms,
+    maxAttempts: tier.max_attempts,
+    createdAt: tier.created_at,
+    updatedAt: tier.updated_at,
+  };
+}
+
+export function toRoutingFallbackRuleResponse(rule: RoutingFallbackRuleRow) {
+  return {
+    id: rule.id,
+    workloadId: rule.workload_id,
+    fromTierId: rule.from_tier_id,
+    toTierId: rule.to_tier_id,
+    conditionType: rule.condition_type,
+    conditionConfig: rule.condition_config,
+    priority: rule.priority,
+    enabled: rule.enabled,
+    createdAt: rule.created_at,
+    updatedAt: rule.updated_at,
+  };
+}
+
+/**
+ * `RoutingDecision` (`services/routingService.ts`) is already a
+ * synthesized, camelCase, API-shaped object — not a raw DB row — so
+ * there's no snake_case projection to do here. This function exists
+ * anyway as the one declared seam between the service and the HTTP
+ * response, matching every other route's convention of never returning a
+ * service/repository object directly. It never adds or removes fields
+ * beyond what `RoutingDecision` already guarantees contains no
+ * credential, secret, or raw provider data (see docs/ROUTING_POLICY.md).
+ */
+export function toRoutingDecisionResponse(decision: RoutingDecision) {
+  return decision;
 }
 
 export function toProviderHealthEventResponse(event: VendorAccountHealthEventRow) {

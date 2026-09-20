@@ -207,6 +207,26 @@ export interface RoutingFallbackRuleRow {
 
 export type NewRoutingFallbackRule = Omit<RoutingFallbackRuleRow, "id" | "created_at" | "updated_at">;
 
+/**
+ * `workload_id`/`vendor_id`/`model_id`/`tier_number` are intentionally
+ * excluded — they define the tier's identity (and its uniqueness
+ * constraint); changing which vendor/model/workload/position a tier
+ * represents is a delete-and-recreate, not a patch (see docs/API.md,
+ * mirroring `ModelPatch` excluding `vendor_id`).
+ */
+export type RoutingTierPatch = Partial<
+  Pick<RoutingTierRow, "priority" | "enabled" | "timeout_override_ms" | "max_attempts">
+>;
+
+/**
+ * `workload_id`/`from_tier_id`/`to_tier_id` are intentionally excluded —
+ * they define which two tiers this rule connects; repointing a rule at
+ * different tiers is a delete-and-recreate, not a patch.
+ */
+export type RoutingFallbackRulePatch = Partial<
+  Pick<RoutingFallbackRuleRow, "condition_type" | "condition_config" | "priority" | "enabled">
+>;
+
 export interface InhouseApiKeyRow {
   id: string;
   key_id: string;

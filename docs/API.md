@@ -1,14 +1,18 @@
-# Inhouse API (Block 04 — Foundation, persistence added in Block 05, Vendor System added in Block 06, Model Catalog added in Block 07, Credential Vault added in Block 08, Provider Account Health Foundation added in Block 09, Provider Adapter / Integration Layer added in Block 10)
+# Inhouse API (Block 04 — Foundation, persistence added in Block 05, Vendor System added in Block 06, Model Catalog added in Block 07, Credential Vault added in Block 08, Provider Account Health Foundation added in Block 09, Provider Adapter / Integration Layer added in Block 10, Routing Policy & Deterministic Selection Foundation added in Block 11)
 
 ## Status
 
-Authentication, model execution, routing, telemetry, and accounting still
-do not exist. Those remain later blocks. **Block 10 adds the first real
-provider adapter implementation and a protocol/adapter registry** — see
-`docs/PROVIDER_ADAPTERS.md` — but still exposes no execution endpoint of
-any kind; the only HTTP-visible change is the `adapterSupported` field on
-every vendor response (see "Vendor System" below). `/root/adorbis-api` is
-a separate, external service — Inhouse does not call it yet and this
+Authentication, model execution, routing *execution*, telemetry, and
+accounting still do not exist. Those remain later blocks. **Block 10
+adds the first real provider adapter implementation and a
+protocol/adapter registry** — see `docs/PROVIDER_ADAPTERS.md` — but
+still exposes no execution endpoint of any kind; the only HTTP-visible
+change is the `adapterSupported` field on every vendor response (see
+"Vendor System" below). **Block 11 adds a routing *policy* layer** — see
+"Routing Policy (Block 11)" below and `docs/ROUTING_POLICY.md` — that can
+explain what would be selected for a workload (a dry-run/preview) but
+still cannot send an actual request anywhere. `/root/adorbis-api` is a
+separate, external service — Inhouse does not call it yet and this
 document does not cover it.
 
 Block 05 added a PostgreSQL persistence layer (SQL migrations, a
@@ -25,13 +29,14 @@ matters going forward:
 
 - **Persistence exists and is now reachable over HTTP** for vendors,
   vendor accounts, vendor credentials (now optionally INHOUSE-vault-managed
-  — see below), vendor account health, models, capabilities, and
-  workloads (see "Vendor System" and "Model Catalog" below) — real
-  reads/writes through the Block 05/06/07/08/09 schema and repositories.
+  — see below), vendor account health, models, capabilities, workloads,
+  and routing tiers/fallback rules (see "Vendor System", "Model
+  Catalog", and "Routing Policy (Block 11)" below) — real reads/writes
+  through the Block 05/06/07/08/09/11 schema and repositories.
 - **`/health` and `/ready` (and their `/v1` equivalents) remain
   database-free by design** — they never depend on the database, so they
   stay reliable as liveness/readiness probes regardless of the database's
-  state. This did not change in Block 06, 07, 08, or 09.
+  state. This did not change in Block 06, 07, 08, 09, or 11.
 - **No route executes a provider call, routing decision, or model
   execution.** The Vendor System and Model Catalog persist *configuration*
   (including routing-adjacent fields like priority and retry conditions,
@@ -45,6 +50,11 @@ matters going forward:
   network-calling protocol adapter (`OpenAiCompatibleAdapter`) and a
   registry to look one up by protocol — but still no route calls it.**
   Every real network call this block makes happens only inside a test.
+  **Block 11 can compute and explain a routing *decision* (a dry-run
+  preview) but still cannot act on it** — `POST /v1/routing/preview`
+  never calls a provider, decrypts a credential, or writes a usage
+  ledger/health-event row. See "Routing Policy (Block 11)" below and
+  `docs/ROUTING_POLICY.md`.
   See `docs/PROVIDER_ADAPTERS.md`.
 - **No route implements authentication.** Every endpoint below, including
   the Vendor System and Model Catalog, is unauthenticated in this block
@@ -342,6 +352,97 @@ Model create, update, status-change, and assignment operations are
 recorded to `audit_events` (`model.created`, `model.updated`,
 `model.enabled`, `model.disabled`, `model.capabilities_updated`,
 `model.workloads_updated`).
+
+## Routing Policy (Block 11)
+
+All Routing Policy responses are JSON, camelCase, and share the standard
+error format below on failure. Every route lives under `/v1` and is
+currently unauthenticated (see "Authentication"). Full schema/eligibility
+detail is in `docs/ROUTING_POLICY.md`; this section documents the HTTP
+contract only.
+
+**Scope:** this block reads and manages routing *configuration*
+(`routing_tiers`/`routing_fallback_rules`, unchanged since Block 05) and
+computes a deterministic, explainable dry-run decision over it. **It
+never calls a provider, never decrypts a credential, and never writes a
+usage ledger entry or a health event.**
+
+### Tiers and Fallback Rules
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/v1/routing/workloads/:workloadId` | Combined view: `{ workload, tiers, fallbackRules }` |
+| `GET` | `/v1/routing/workloads/:workloadId/tiers` | |
+| `POST` | `/v1/routing/workloads/:workloadId/tiers` | Body: `{ vendorId, modelId, tierNumber, priority?, enabled?, timeoutOverrideMs?, maxAttempts? }`. Requires the vendor and model to already be assigned to the workload |
+| `PATCH` | `/v1/routing/workloads/:workloadId/tiers/:tierId` | Partial update of `priority`/`enabled`/`timeoutOverrideMs`/`maxAttempts`; at least one field required. `vendorId`/`modelId`/`tierNumber`/`workloadId` are immutable — create a new tier instead |
+| `DELETE` | `/v1/routing/workloads/:workloadId/tiers/:tierId` | **Soft-disable** (`enabled` → `false`), not a row deletion |
+| `GET` | `/v1/routing/workloads/:workloadId/fallback-rules` | |
+| `POST` | `/v1/routing/workloads/:workloadId/fallback-rules` | Body: `{ fromTierId, toTierId, conditionType, conditionConfig?, priority?, enabled? }`. Both tiers must already belong to `workloadId`; `fromTierId`/`toTierId` cannot be equal |
+| `PATCH` | `/v1/routing/workloads/:workloadId/fallback-rules/:ruleId` | Partial update of `conditionType`/`conditionConfig`/`priority`/`enabled` |
+| `DELETE` | `/v1/routing/workloads/:workloadId/fallback-rules/:ruleId` | **Soft-disable** (`enabled` → `false`) |
+
+`conditionType` is one of a fixed vocabulary:
+`on_error | on_timeout | on_rate_limit | on_5xx | on_auth_failure |
+on_invalid_response` (mirrors the per-condition retry flags Block 06
+already added to `vendors`) — see `docs/ROUTING_POLICY.md`, "Fixed
+Condition Vocabulary". Nothing evaluates this field to trigger a real
+fallback.
+
+### Preview / Dry-Run
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/v1/routing/preview` | Body: `{ workloadId, modelId?, capabilityIds? }`. Returns `{ decision }` |
+
+`decision` shape:
+
+```json
+{
+  "workload": { "id": "...", "slug": "chat", "displayName": "Chat", "status": "enabled" },
+  "requested": { "modelId": null, "capabilityIds": [] },
+  "candidates": [
+    {
+      "tierId": "...",
+      "tierNumber": 1,
+      "priority": 5,
+      "tierEnabled": true,
+      "vendor": { "id": "...", "slug": "...", "displayName": "...", "status": "enabled" },
+      "model": { "id": "...", "inhouseAlias": "...", "displayName": "...", "status": "enabled" },
+      "health": "healthy",
+      "accounts": [{ "id": "...", "slug": "...", "displayName": "...", "status": "enabled", "health": "healthy" }],
+      "retryPolicy": { "timeoutMs": 5000, "maxAttempts": 3, "retryOnTimeout": true, "retryOnRateLimit": false, "retryOn5xx": false, "retryOnAuthFailure": false, "retryOnInvalidResponse": false },
+      "outgoingFallbackRules": [],
+      "eligible": true,
+      "reasons": []
+    }
+  ],
+  "selectedCandidate": { "...": "same shape as a candidate, or null" },
+  "outcome": "selected",
+  "fallbackRules": [],
+  "generatedAt": "2026-09-20T00:00:00.000Z"
+}
+```
+
+`outcome` is one of `selected` / `no_eligible_candidate` /
+`no_tiers_configured`. `reasons` accumulates every applicable exclusion
+reason for an ineligible candidate (see `docs/ROUTING_POLICY.md`,
+"Eligibility Engine", for the full reason vocabulary) — never just the
+first one found. The response never includes a credential, secret,
+ciphertext, or raw provider data of any kind.
+
+**This is configuration simulation only.** It never contacts a provider,
+never executes an LLM request, never consumes a credential, and never
+creates a usage ledger entry or a health event — see
+`docs/ROUTING_POLICY.md`, "Preview / Dry-Run Semantics".
+
+### Audit Trail
+
+Routing tier/fallback-rule create, update, and enable/disable operations
+are recorded to `audit_events` (`routing_tier.created`,
+`routing_tier.updated`, `routing_tier.enabled`, `routing_tier.disabled`,
+`routing_fallback_rule.created`, `routing_fallback_rule.updated`,
+`routing_fallback_rule.enabled`, `routing_fallback_rule.disabled`). A
+preview call records no audit event — it changes nothing.
 
 ## Request ID / Correlation
 

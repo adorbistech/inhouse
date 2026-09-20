@@ -10,6 +10,7 @@ import { registerCapabilityRoutes } from "./routes/capabilities.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerModelRoutes } from "./routes/models.js";
 import { registerProviderHealthRoutes } from "./routes/providerHealth.js";
+import { registerRoutingRoutes } from "./routes/routing.js";
 import { registerVendorRoutes } from "./routes/vendors.js";
 import { registerWorkloadRoutes } from "./routes/workloads.js";
 
@@ -99,6 +100,7 @@ export async function buildApp(config: AppConfig, options: BuildAppOptions = {})
     registerWorkloadRoutes(app, options.pool, config);
     registerModelRoutes(app, options.pool, config);
     registerProviderHealthRoutes(app, options.pool, config);
+    registerRoutingRoutes(app, options.pool, config);
   }
 
   return app;

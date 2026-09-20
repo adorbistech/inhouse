@@ -215,6 +215,154 @@ export interface ProviderHealthEventApi {
   createdAt: string;
 }
 
+/**
+ * Block 11 — Routing Policy & Deterministic Selection Foundation.
+ * `routing_tiers`/`routing_fallback_rules` (Block 05) are unchanged;
+ * these are the HTTP-facing shapes over them. See docs/ROUTING_POLICY.md.
+ */
+export interface RoutingTierApi {
+  id: string;
+  workloadId: string;
+  tierNumber: number;
+  vendorId: string;
+  modelId: string;
+  priority: number;
+  enabled: boolean;
+  timeoutOverrideMs: number | null;
+  maxAttempts: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const FALLBACK_CONDITION_TYPES = [
+  "on_error",
+  "on_timeout",
+  "on_rate_limit",
+  "on_5xx",
+  "on_auth_failure",
+  "on_invalid_response",
+] as const;
+export type FallbackConditionType = (typeof FALLBACK_CONDITION_TYPES)[number];
+
+export interface RoutingFallbackRuleApi {
+  id: string;
+  workloadId: string;
+  fromTierId: string;
+  toTierId: string;
+  conditionType: FallbackConditionType;
+  conditionConfig: Record<string, unknown>;
+  priority: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateRoutingTierPayload {
+  vendorId: string;
+  modelId: string;
+  tierNumber: number;
+  priority?: number;
+  enabled?: boolean;
+  timeoutOverrideMs?: number | null;
+  maxAttempts?: number | null;
+}
+
+export interface UpdateRoutingTierPayload {
+  priority?: number;
+  enabled?: boolean;
+  timeoutOverrideMs?: number | null;
+  maxAttempts?: number | null;
+}
+
+export interface CreateRoutingFallbackRulePayload {
+  fromTierId: string;
+  toTierId: string;
+  conditionType: FallbackConditionType;
+  conditionConfig?: Record<string, unknown>;
+  priority?: number;
+  enabled?: boolean;
+}
+
+export interface UpdateRoutingFallbackRulePayload {
+  conditionType?: FallbackConditionType;
+  conditionConfig?: Record<string, unknown>;
+  priority?: number;
+  enabled?: boolean;
+}
+
+export interface RoutingPreviewPayload {
+  workloadId: string;
+  modelId?: string;
+  capabilityIds?: string[];
+}
+
+/** Never `"unknown"` on `RoutingAccountCandidateApi.health` — that state is a fact about an account, always present. */
+export type RoutingAggregatedHealth = "healthy" | "degraded" | "unhealthy" | "unknown";
+
+export interface RoutingAccountCandidateApi {
+  id: string;
+  slug: string;
+  displayName: string;
+  status: string;
+  health: RoutingAggregatedHealth;
+}
+
+export interface RoutingFallbackRuleSummaryApi {
+  id: string;
+  fromTierId: string;
+  toTierId: string;
+  conditionType: string;
+  conditionConfig: Record<string, unknown>;
+  priority: number;
+  enabled: boolean;
+}
+
+/**
+ * A dry-run candidate — never a credential, secret, or raw provider
+ * response. `eligible`/`reasons` explain exactly why a candidate would
+ * or would not be selected; `reasons` accumulates every applicable
+ * exclusion, not just the first (see docs/ROUTING_POLICY.md).
+ */
+export interface RoutingCandidateApi {
+  tierId: string;
+  tierNumber: number;
+  priority: number;
+  tierEnabled: boolean;
+  vendor: { id: string; slug: string; displayName: string; status: string } | null;
+  model: { id: string; inhouseAlias: string; displayName: string; status: string } | null;
+  health: RoutingAggregatedHealth;
+  accounts: RoutingAccountCandidateApi[];
+  retryPolicy: {
+    timeoutMs: number | null;
+    maxAttempts: number | null;
+    retryOnTimeout: boolean;
+    retryOnRateLimit: boolean;
+    retryOn5xx: boolean;
+    retryOnAuthFailure: boolean;
+    retryOnInvalidResponse: boolean;
+  } | null;
+  outgoingFallbackRules: RoutingFallbackRuleSummaryApi[];
+  eligible: boolean;
+  reasons: string[];
+}
+
+export type RoutingDecisionOutcome = "selected" | "no_eligible_candidate" | "no_tiers_configured";
+
+/**
+ * The full dry-run/preview result (`POST /v1/routing/preview`).
+ * Configuration simulation only — never the result of an actual provider
+ * call. See docs/ROUTING_POLICY.md, "Preview / Dry-Run Semantics".
+ */
+export interface RoutingDecisionApi {
+  workload: { id: string; slug: string; displayName: string; status: string };
+  requested: { modelId: string | null; capabilityIds: string[] };
+  candidates: RoutingCandidateApi[];
+  selectedCandidate: RoutingCandidateApi | null;
+  outcome: RoutingDecisionOutcome;
+  fallbackRules: RoutingFallbackRuleSummaryApi[];
+  generatedAt: string;
+}
+
 /** The backend's own liveness surface (`GET /v1/health`) — never provider-specific. */
 export interface SystemHealthApi {
   status: "ok";

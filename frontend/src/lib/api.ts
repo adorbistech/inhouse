@@ -1,14 +1,22 @@
 import type {
   CapabilityApi,
   CreateModelPayload,
+  CreateRoutingFallbackRulePayload,
+  CreateRoutingTierPayload,
   CreateVendorPayload,
   ModelApi,
   ModelDetailApi,
   ModelListFilters,
   ProviderHealthApi,
   ProviderHealthEventApi,
+  RoutingDecisionApi,
+  RoutingFallbackRuleApi,
+  RoutingPreviewPayload,
+  RoutingTierApi,
   SystemHealthApi,
   UpdateModelPayload,
+  UpdateRoutingFallbackRulePayload,
+  UpdateRoutingTierPayload,
   UpdateVendorPayload,
   VendorAccountApi,
   VendorApi,
@@ -201,4 +209,61 @@ export const api = {
     ),
 
   getSystemHealth: () => request<SystemHealthApi>("/health"),
+
+  // --- Routing Policy (Block 11) ---
+
+  getRoutingConfig: (workloadId: string) =>
+    request<{ workload: WorkloadApi; tiers: RoutingTierApi[]; fallbackRules: RoutingFallbackRuleApi[] }>(
+      `/routing/workloads/${workloadId}`,
+    ),
+
+  listRoutingTiers: (workloadId: string) =>
+    request<{ tiers: RoutingTierApi[] }>(`/routing/workloads/${workloadId}/tiers`),
+
+  createRoutingTier: (workloadId: string, payload: CreateRoutingTierPayload) =>
+    request<{ tier: RoutingTierApi }>(`/routing/workloads/${workloadId}/tiers`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateRoutingTier: (workloadId: string, tierId: string, patch: UpdateRoutingTierPayload) =>
+    request<{ tier: RoutingTierApi }>(`/routing/workloads/${workloadId}/tiers/${tierId}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+
+  disableRoutingTier: (workloadId: string, tierId: string) =>
+    request<{ tier: RoutingTierApi }>(`/routing/workloads/${workloadId}/tiers/${tierId}`, { method: "DELETE" }),
+
+  enableRoutingTier: (workloadId: string, tierId: string) =>
+    request<{ tier: RoutingTierApi }>(`/routing/workloads/${workloadId}/tiers/${tierId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled: true }),
+    }),
+
+  listRoutingFallbackRules: (workloadId: string) =>
+    request<{ fallbackRules: RoutingFallbackRuleApi[] }>(`/routing/workloads/${workloadId}/fallback-rules`),
+
+  createRoutingFallbackRule: (workloadId: string, payload: CreateRoutingFallbackRulePayload) =>
+    request<{ fallbackRule: RoutingFallbackRuleApi }>(`/routing/workloads/${workloadId}/fallback-rules`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateRoutingFallbackRule: (workloadId: string, ruleId: string, patch: UpdateRoutingFallbackRulePayload) =>
+    request<{ fallbackRule: RoutingFallbackRuleApi }>(`/routing/workloads/${workloadId}/fallback-rules/${ruleId}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+
+  disableRoutingFallbackRule: (workloadId: string, ruleId: string) =>
+    request<{ fallbackRule: RoutingFallbackRuleApi }>(`/routing/workloads/${workloadId}/fallback-rules/${ruleId}`, {
+      method: "DELETE",
+    }),
+
+  previewRouting: (payload: RoutingPreviewPayload) =>
+    request<{ decision: RoutingDecisionApi }>("/routing/preview", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
