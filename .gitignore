@@ -26,3 +26,6 @@ build/
 
 # Disposable test database connection info (Block 05)
 backend/.test-db.json
+
+# Design reference artifact — intentionally kept outside Git
+stitch_ai_infrastructure_control_plane.zip
