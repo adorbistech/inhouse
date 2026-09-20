@@ -21,11 +21,60 @@ vi.mock("../lib/api", async (importOriginal) => {
       listCapabilities: vi.fn(),
       listWorkloads: vi.fn(),
       getSystemHealth: vi.fn(),
+      listApiKeys: vi.fn(),
+      createApiKey: vi.fn(),
+      revokeApiKey: vi.fn(),
+      setApiKeyWorkloads: vi.fn(),
+      listUsage: vi.fn(),
     },
   };
 });
 
-import { api, ApiError } from "../lib/api";
+import { adminToken, api, ApiError } from "../lib/api";
+import type { ApiKeyApi, UsageLedgerEntryApi } from "../types/api";
+
+function sampleApiKey(overrides: Partial<ApiKeyApi> = {}): ApiKeyApi {
+  return {
+    id: "key_row_1",
+    keyId: "key_abc123",
+    name: "Test Key",
+    status: "active",
+    createdAt: "2026-09-19T00:00:00Z",
+    lastUsedAt: null,
+    expiresAt: null,
+    workloadIds: [],
+    ...overrides,
+  };
+}
+
+function sampleUsageEntry(overrides: Partial<UsageLedgerEntryApi> = {}): UsageLedgerEntryApi {
+  return {
+    id: "usage_1",
+    executionId: "11111111-1111-1111-1111-111111111111",
+    requestId: "req_1",
+    inhouseApiKeyId: "key_row_1",
+    vendorId: "vnd_1",
+    vendorAccountId: "acct_1",
+    modelId: "mdl_1",
+    workloadId: "wl_1",
+    primaryTierId: "tier_1",
+    fallbackTierId: null,
+    isFallback: false,
+    attemptCount: 1,
+    status: "success",
+    inputTokens: 12,
+    outputTokens: 8,
+    totalTokens: 20,
+    latencyMs: 340,
+    errorCategory: null,
+    providerRequestId: "provider-resp-1",
+    providerCost: null,
+    inhouseCost: null,
+    currency: null,
+    createdAt: "2026-09-19T00:00:00Z",
+    ...overrides,
+  };
+}
 
 function sampleVendor(overrides: Partial<VendorApi> = {}): VendorApi {
   return {
@@ -129,6 +178,8 @@ beforeEach(() => {
   vi.mocked(api.listCapabilities).mockResolvedValue({ capabilities: [] });
   vi.mocked(api.listWorkloads).mockResolvedValue({ workloads: [] });
   vi.mocked(api.getSystemHealth).mockResolvedValue(sampleHealth());
+  vi.mocked(api.listApiKeys).mockResolvedValue({ apiKeys: [] });
+  vi.mocked(api.listUsage).mockResolvedValue({ usage: [] });
 });
 
 describe("Settings — Models tab", () => {
@@ -330,28 +381,115 @@ describe("Settings — Routing tab (Block 10 audit fix)", () => {
   });
 });
 
-describe("Settings — API tab (Block 10 audit fix)", () => {
-  test("shows Inhouse access tokens as not yet available instead of a fabricated key list", async () => {
+describe("Settings — API tab (Block 12: real API key management)", () => {
+  test("shows an empty state when no access tokens are issued yet", async () => {
     await openTab(/^api$/i);
-    expect(await screen.findByText(/inhouse gateway api key issuance.*implemented in a later block/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no access tokens issued yet/i)).toBeInTheDocument();
+  });
+
+  test("lists keys returned by the API, and reveals the raw key exactly once right after creating a new one", async () => {
+    vi.mocked(api.listWorkloads).mockResolvedValue({ workloads: [sampleWorkload({ id: "wl_1", slug: "coding_agent" })] });
+    vi.mocked(api.listApiKeys).mockResolvedValue({ apiKeys: [sampleApiKey({ name: "Existing Key", workloadIds: ["wl_1"] })] });
+    vi.mocked(api.createApiKey).mockResolvedValue({
+      apiKey: sampleApiKey({ id: "key_row_2", name: "New Key", workloadIds: ["wl_1"] }),
+      rawKey: "ihk_freshly_generated_raw_key",
+    });
+
+    await openTab(/^api$/i);
+    expect(await screen.findByText("Existing Key")).toBeInTheDocument();
+    expect(screen.getByText("coding_agent", { selector: "td span" })).toBeInTheDocument();
+    expect(screen.queryByText("ihk_freshly_generated_raw_key")).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByPlaceholderText(/claude-code-dev/i), "New Key");
+    // Default deny: creating is impossible until at least one workload is granted.
+    expect(screen.getByRole("button", { name: /create key/i })).toBeDisabled();
+    await userEvent.click(await screen.findByRole("checkbox", { name: /coding_agent/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create key/i }));
+
+    expect(await screen.findByText("ihk_freshly_generated_raw_key")).toBeInTheDocument();
+    expect(api.createApiKey).toHaveBeenCalledWith({ name: "New Key", workloadIds: ["wl_1"] });
+  });
+
+  test("a key with no workload grants is shown as unable to execute", async () => {
+    vi.mocked(api.listApiKeys).mockResolvedValue({ apiKeys: [sampleApiKey({ name: "Bare Key", workloadIds: [] })] });
+    await openTab(/^api$/i);
+    expect(await screen.findByText(/none — cannot execute/i)).toBeInTheDocument();
+  });
+
+  test("the admin token is kept in session storage only, sent by the api layer, and can be forgotten", async () => {
+    adminToken.clear();
+    await openTab(/^api$/i);
+    await userEvent.type(await screen.findByPlaceholderText(/INHOUSE_ADMIN_TOKEN/i), "a-test-admin-token-value");
+    await userEvent.click(screen.getByRole("button", { name: /use token/i }));
+
+    expect(adminToken.get()).toBe("a-test-admin-token-value");
+    expect(window.localStorage.length).toBe(0);
+    expect(screen.queryByDisplayValue("a-test-admin-token-value")).not.toBeInTheDocument(); // field cleared after saving
+    expect(api.listApiKeys).toHaveBeenCalledTimes(2); // on mount, and again once a token is provided
+
+    await userEvent.click(screen.getByRole("button", { name: /forget/i }));
+    expect(adminToken.get()).toBeNull();
+  });
+
+  test("every control-plane request carries the token as a Bearer header, and only the public health probe does not", async () => {
+    const realApi = (await vi.importActual<typeof import("../lib/api")>("../lib/api")).api;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ apiKeys: [], workloads: [] }), { status: 200 }));
+    try {
+      adminToken.set("guarded-token-value");
+      await realApi.listApiKeys();
+      await realApi.listWorkloads();
+      await realApi.getSystemHealth();
+      const authOf = (i: number) => new Headers((fetchSpy.mock.calls[i]?.[1] as RequestInit).headers).get("authorization");
+      expect(authOf(0)).toBe("Bearer guarded-token-value");
+      expect(authOf(1)).toBe("Bearer guarded-token-value");
+      expect(authOf(2)).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+      adminToken.clear();
+    }
+  });
+
+  test("revoking a key calls the revoke endpoint and refreshes the list", async () => {
+    vi.mocked(api.listApiKeys).mockResolvedValue({ apiKeys: [sampleApiKey({ id: "key_row_3", name: "Revoke Me" })] });
+    vi.mocked(api.revokeApiKey).mockResolvedValue({ apiKey: sampleApiKey({ id: "key_row_3", name: "Revoke Me", status: "revoked" }) });
+
+    await openTab(/^api$/i);
+    await screen.findByText("Revoke Me");
+    await userEvent.click(screen.getByRole("button", { name: /revoke/i }));
+
+    expect(api.revokeApiKey).toHaveBeenCalledWith("key_row_3");
+    expect(api.listApiKeys).toHaveBeenCalledTimes(2); // once on mount, once after revoking
+  });
+
+  test("the setup guide no longer claims streaming is unsupported, and never hardcodes a production domain", async () => {
+    await openTab(/^api$/i);
+    expect(await screen.findByText(/both endpoints support streaming/i)).toBeInTheDocument();
+    expect(screen.queryByText(/501/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/adorbistech/i)).not.toBeInTheDocument();
   });
 });
 
-describe("Settings — Accounting tab (Block 10 audit fix)", () => {
-  test("shows cost accounting as not yet available instead of fabricated dollar figures", async () => {
-    await openTab(/^accounting$/i);
-    expect(await screen.findByText(/no cost or usage figures/i)).toBeInTheDocument();
-  });
-
-  test("lists real vendor billing types from the API, with no hardcoded provider inventory", async () => {
+describe("Settings — Accounting tab (Block 12: real execution/usage telemetry)", () => {
+  test("shows an empty state when no executions have been recorded yet, and lists real vendor billing types", async () => {
     vi.mocked(api.listVendors).mockResolvedValue({
       vendors: [sampleVendor({ displayName: "Configured Vendor", billingType: "metered" })],
     });
     await openTab(/^accounting$/i);
+    expect(await screen.findByText(/no executions recorded yet/i)).toBeInTheDocument();
     expect(await screen.findByText("Configured Vendor")).toBeInTheDocument();
     for (const banned of ["z.ai", "Cerebras", "Alibaba", "OpenCode"]) {
       expect(screen.queryByText(new RegExp(banned, "i"))).not.toBeInTheDocument();
     }
+  });
+
+  test("lists real usage ledger entries from the API, and never fabricates a cost figure", async () => {
+    vi.mocked(api.listUsage).mockResolvedValue({
+      usage: [sampleUsageEntry({ status: "error", errorCategory: "timeout", inputTokens: null, outputTokens: null })],
+    });
+    await openTab(/^accounting$/i);
+    expect(await screen.findByText("timeout")).toBeInTheDocument();
+    // "—" appears for both cost columns and for the null token counts — never a fabricated "$0.00" or "0".
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
   });
 });
 

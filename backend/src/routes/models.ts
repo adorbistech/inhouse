@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config/index.js";
+import { requireAdmin } from "../plugins/adminAuth.js";
 import { ModelService } from "../services/modelService.js";
 import {
   requireUuidParam,
@@ -12,7 +13,7 @@ import {
 import { toCapabilityResponse, toModelDetailResponse, toModelResponse, toWorkloadResponse } from "./serializers.js";
 
 function auditContext(request: FastifyRequest) {
-  // No Inhouse authentication exists yet (see docs/API.md) — actorId will
+  // Every control-plane route is admin-token guarded, but the token is a shared secret with no principal — actorId will
   // be populated once a later block adds real principals.
   return { actorId: null, requestId: request.id };
 }
@@ -22,6 +23,7 @@ export function registerModelRoutes(app: FastifyInstance, pool: Pool, config: Ap
 
   app.register(
     async (versioned) => {
+      requireAdmin(versioned, config);
       versioned.get("/models", async (request) => {
         const filters = validateModelListQuery(request.query as Record<string, unknown>);
         const models = await service.list(filters);

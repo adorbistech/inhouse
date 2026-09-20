@@ -35,3 +35,25 @@ export class ConflictError extends HttpError {
     this.name = "ConflictError";
   }
 }
+
+export class UnauthorizedError extends HttpError {
+  constructor(message = "Missing, invalid, or disabled Inhouse API key.") {
+    super(401, "UNAUTHENTICATED", message);
+    this.name = "UnauthorizedError";
+  }
+}
+
+export class ForbiddenError extends HttpError {
+  constructor(message = "This API key is not permitted to perform this action.", code = "FORBIDDEN") {
+    super(403, code, message);
+    this.name = "ForbiddenError";
+  }
+}
+
+/** Raised when a required server-side configuration (never a caller mistake) is absent, so the route fails closed. */
+export class ServiceUnavailableError extends HttpError {
+  constructor(code: string, message: string) {
+    super(503, code, message);
+    this.name = "ServiceUnavailableError";
+  }
+}

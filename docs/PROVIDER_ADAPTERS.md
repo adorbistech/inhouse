@@ -375,3 +375,8 @@ Performed before considering this block complete:
   fixtures) correctly reports `adapterSupported: false`.
 - Any real, periodic, or on-demand invocation of `checkHealth()` from a
   running process — only tests call it.
+
+
+## Block 12 contract additions
+
+`ProviderAdapter.execute()` now accepts an optional `AbortSignal`; requests/responses carry provider-neutral tools, tool calls and a normalized `finishReason`; `cancelled` is a new execution error category; and an optional `executeStream()` returns a bounded, normalized event stream (`text_delta`, `tool_call_delta`, `finish`, `error`). Implementations must enforce an idle timeout, a total byte cap and an absolute duration cap, and stop work on abort. See [EXECUTION.md](EXECUTION.md).

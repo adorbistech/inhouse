@@ -7,7 +7,7 @@ import type { FastifyInstance } from "fastify";
 import type { DbConfig } from "../../src/types/db.js";
 import { runMigrations } from "../../src/db/migrate.js";
 import type { Queryable } from "../../src/db/client.js";
-import { buildApp } from "../../src/app.js";
+import { buildApp, type BuildAppOptions } from "../../src/app.js";
 import { loadConfig } from "../../src/config/index.js";
 import { CredentialVaultService } from "../../src/lib/credentialVault.js";
 
@@ -22,6 +22,11 @@ import { CredentialVaultService } from "../../src/lib/credentialVault.js";
  * `CredentialVaultService` with the same key the test app is using.
  */
 export const TEST_VAULT_KEY = randomBytes(32).toString("hex");
+
+/** The administrative token every DB-backed test app is configured with (guards /v1/api-keys* and /v1/usage). */
+export const TEST_ADMIN_TOKEN = `test-admin-${randomBytes(24).toString("hex")}`;
+/** Headers carrying the legitimate control-plane administrative credential. */
+export const ADMIN = { authorization: `Bearer ${TEST_ADMIN_TOKEN}` };
 
 const STATE_FILE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -103,6 +108,7 @@ export async function withMigratedPool<T>(fn: (pool: Pool, config: DbConfig) => 
  */
 export async function withMigratedApp<T>(
   fn: (app: FastifyInstance, pool: Pool, config: DbConfig) => Promise<T>,
+  appOptions: Partial<BuildAppOptions> = {},
 ): Promise<T> {
   const config = await loadTestDbConfig();
   const bootstrapClient = new Client({
@@ -125,9 +131,10 @@ export async function withMigratedApp<T>(
     options: `-c search_path=${config.schema},public`,
     max: 5,
   });
-  const app = await buildApp(loadConfig({ INHOUSE_API_ENV: "test" } as NodeJS.ProcessEnv), {
+  const app = await buildApp(loadConfig({ INHOUSE_API_ENV: "test", INHOUSE_ADMIN_TOKEN: TEST_ADMIN_TOKEN } as NodeJS.ProcessEnv), {
     pool,
     credentialVault: new CredentialVaultService(TEST_VAULT_KEY),
+    ...appOptions,
   });
   try {
     return await fn(app, pool, config);

@@ -6,7 +6,10 @@ import type { CredentialVaultService } from "./lib/credentialVault.js";
 import { registerErrorHandling } from "./plugins/errorHandler.js";
 import { registerRequestContext } from "./plugins/requestContext.js";
 import { registerSecurity } from "./plugins/security.js";
+import type { AdapterRegistry } from "./services/adapters/adapterRegistry.js";
+import { registerApiKeyRoutes } from "./routes/apiKeys.js";
 import { registerCapabilityRoutes } from "./routes/capabilities.js";
+import { registerExecutionRoutes } from "./routes/execution.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerModelRoutes } from "./routes/models.js";
 import { registerProviderHealthRoutes } from "./routes/providerHealth.js";
@@ -17,6 +20,8 @@ import { registerWorkloadRoutes } from "./routes/workloads.js";
 export interface BuildAppOptions {
   /** Override the logger's output stream. Used by tests to capture log lines. */
   loggerStream?: NodeJS.WritableStream;
+  /** Override the provider-adapter registry. Used by tests to inject a spy/fake transport; defaults to the real registry. */
+  adapterRegistry?: AdapterRegistry;
   /**
    * Postgres pool for Block 06+ data-backed routes (vendors, capabilities,
    * workloads). Optional and intentionally separate from `/health`/`/ready`
@@ -33,6 +38,9 @@ export interface BuildAppOptions {
    */
   credentialVault?: CredentialVaultService;
 }
+
+/** Longest/safest caller-supplied `x-request-id` accepted verbatim. */
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
 const REDACTED_PATHS = [
   "req.headers.authorization",
@@ -55,7 +63,10 @@ export async function buildApp(config: AppConfig, options: BuildAppOptions = {})
     bodyLimit: config.bodyLimitBytes,
     genReqId: (request) => {
       const incoming = request.headers["x-request-id"];
-      if (typeof incoming === "string" && incoming.trim().length > 0) {
+      // A caller-supplied correlation id is honored only if it is short and
+      // made of safe characters; anything else (oversized, control
+      // characters, header/log-injection attempts) is replaced by a fresh id.
+      if (typeof incoming === "string" && REQUEST_ID_PATTERN.test(incoming)) {
         return incoming;
       }
       return randomUUID();
@@ -101,6 +112,8 @@ export async function buildApp(config: AppConfig, options: BuildAppOptions = {})
     registerModelRoutes(app, options.pool, config);
     registerProviderHealthRoutes(app, options.pool, config);
     registerRoutingRoutes(app, options.pool, config);
+    registerApiKeyRoutes(app, options.pool, config);
+    registerExecutionRoutes(app, options.pool, config, options.credentialVault, options.adapterRegistry);
   }
 
   return app;

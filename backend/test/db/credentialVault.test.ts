@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ADMIN } from "./helpers.js";
 import { test } from "node:test";
 import { withMigratedApp, truncateAll, TEST_VAULT_KEY } from "./helpers.js";
 import { CredentialVaultService } from "../../src/lib/credentialVault.js";
@@ -14,10 +15,10 @@ const sampleVendorPayload = {
 };
 
 async function createVendorWithAccount(app: import("fastify").FastifyInstance) {
-  const vendor = (await app.inject({ method: "POST", url: "/v1/vendors", payload: sampleVendorPayload })).json()
+  const vendor = (await app.inject({ headers: ADMIN, method: "POST", url: "/v1/vendors", payload: sampleVendorPayload })).json()
     .vendor;
   const account = (
-    await app.inject({
+    await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/vendors/${vendor.id}/accounts`,
       payload: { slug: "primary", displayName: "Primary Account" },
@@ -31,7 +32,7 @@ test("creating a credential with a raw secret encrypts it — the response never
     await truncateAll(pool, "inhouse");
     const { vendor, account } = await createVendorWithAccount(app);
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/vendors/${vendor.id}/credentials`,
       payload: { vendorAccountId: account.id, credentialType: "api_key", secret: "sk-live-provider-secret-value" },
@@ -70,7 +71,7 @@ test("providing both secret and secretRef is rejected; providing neither is reje
     await truncateAll(pool, "inhouse");
     const { vendor, account } = await createVendorWithAccount(app);
 
-    const bothRes = await app.inject({
+    const bothRes = await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/vendors/${vendor.id}/credentials`,
       payload: {
@@ -82,7 +83,7 @@ test("providing both secret and secretRef is rejected; providing neither is reje
     });
     assert.equal(bothRes.statusCode, 400);
 
-    const neitherRes = await app.inject({
+    const neitherRes = await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/vendors/${vendor.id}/credentials`,
       payload: { vendorAccountId: account.id, credentialType: "api_key" },
@@ -97,7 +98,7 @@ test("a stored managed secret round-trips through the narrow decrypt boundary, u
     const { vendor, account } = await createVendorWithAccount(app);
     const rawSecret = "sk-live-round-trip-secret-98765";
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/vendors/${vendor.id}/credentials`,
       payload: { vendorAccountId: account.id, credentialType: "api_key", secret: rawSecret },
@@ -115,7 +116,7 @@ test("attempting to decrypt a secretRef-mode credential (no managed secret) fail
     await truncateAll(pool, "inhouse");
     const { vendor, account } = await createVendorWithAccount(app);
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/vendors/${vendor.id}/credentials`,
       payload: { vendorAccountId: account.id, credentialType: "api_key", secretRef: "vault://external/path" },
@@ -133,14 +134,14 @@ test("rotating a credential's secret replaces the encrypted material, changes th
     const { vendor, account } = await createVendorWithAccount(app);
 
     const created = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: `/v1/vendors/${vendor.id}/credentials`,
         payload: { vendorAccountId: account.id, credentialType: "api_key", secret: "sk-old-secret-aaaa" },
       })
     ).json().credential;
 
-    const rotateRes = await app.inject({
+    const rotateRes = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/vendors/${vendor.id}/credentials/${created.id}`,
       payload: { secret: "sk-new-secret-zzzz" },
@@ -163,7 +164,7 @@ test("rotating a credential's secret replaces the encrypted material, changes th
 
     // Rotate a second time to confirm repeated rotation keeps working and
     // keeps using a fresh nonce/ciphertext each time.
-    const secondRotateRes = await app.inject({
+    const secondRotateRes = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/vendors/${vendor.id}/credentials/${created.id}`,
       payload: { secret: "sk-third-secret-yyyy" },
@@ -194,14 +195,14 @@ test("rotating from a managed secret to an external secretRef switches modes cle
     const { vendor, account } = await createVendorWithAccount(app);
 
     const created = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: `/v1/vendors/${vendor.id}/credentials`,
         payload: { vendorAccountId: account.id, credentialType: "api_key", secret: "sk-managed-secret" },
       })
     ).json().credential;
 
-    const switchRes = await app.inject({
+    const switchRes = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/vendors/${vendor.id}/credentials/${created.id}`,
       payload: { secretRef: "vault://now-external" },
@@ -219,14 +220,14 @@ test("disabling and re-enabling a credential via PATCH status records distinct a
     await truncateAll(pool, "inhouse");
     const { vendor, account } = await createVendorWithAccount(app);
     const created = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: `/v1/vendors/${vendor.id}/credentials`,
         payload: { vendorAccountId: account.id, credentialType: "api_key", secret: "sk-lifecycle-secret" },
       })
     ).json().credential;
 
-    const disableRes = await app.inject({
+    const disableRes = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/vendors/${vendor.id}/credentials/${created.id}`,
       payload: { status: "disabled" },
@@ -234,7 +235,7 @@ test("disabling and re-enabling a credential via PATCH status records distinct a
     assert.equal(disableRes.statusCode, 200);
     assert.equal(disableRes.json().credential.status, "disabled");
 
-    const enableRes = await app.inject({
+    const enableRes = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/vendors/${vendor.id}/credentials/${created.id}`,
       payload: { status: "enabled" },
@@ -260,14 +261,14 @@ test("a disabled credential's secret cannot be decrypted through the narrow acce
     await truncateAll(pool, "inhouse");
     const { vendor, account } = await createVendorWithAccount(app);
     const created = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: `/v1/vendors/${vendor.id}/credentials`,
         payload: { vendorAccountId: account.id, credentialType: "api_key", secret: "sk-must-not-be-decryptable" },
       })
     ).json().credential;
 
-    const disableRes = await app.inject({
+    const disableRes = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/vendors/${vendor.id}/credentials/${created.id}`,
       payload: { status: "disabled" },
@@ -281,7 +282,7 @@ test("a disabled credential's secret cannot be decrypted through the narrow acce
     );
 
     // Re-enabling restores decrypt access to the same, unchanged secret.
-    await app.inject({
+    await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/vendors/${vendor.id}/credentials/${created.id}`,
       payload: { status: "enabled" },
@@ -297,7 +298,7 @@ test("a managed secret is persisted as ciphertext, never plaintext, at the datab
     const rawSecret = "sk-must-never-appear-as-plaintext-in-storage";
 
     const created = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: `/v1/vendors/${vendor.id}/credentials`,
         payload: { vendorAccountId: account.id, credentialType: "api_key", secret: rawSecret },

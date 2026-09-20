@@ -8,10 +8,8 @@
  * interface for one *technical protocol*; which business vendors use that
  * protocol is a database fact (`vendors.protocol`), never hardcoded here.
  *
- * Nothing in this codebase calls `execute()` from a route, and there is no
- * public execution endpoint — see docs/PROVIDER_ADAPTERS.md. Wiring this
- * into an actual request/response path (routing, model selection, usage
- * accounting) is explicitly a later block's job.
+ * Only `services/executionService.ts` (Block 12) calls `execute()` /
+ * `executeStream()` — never a route directly. See docs/EXECUTION.md.
  */
 
 export type ProviderHealthStatus = "healthy" | "degraded" | "unhealthy";
@@ -46,7 +44,9 @@ export type ProviderExecutionErrorCategory =
   | ProviderErrorCategory
   | "invalid_request"
   | "model_not_found"
-  | "unavailable";
+  | "unavailable"
+  /** The caller aborted (client disconnect) — never retried, never a fallback trigger. */
+  | "cancelled";
 
 export interface ProviderHealthCheckResult {
   status: ProviderHealthStatus;
@@ -75,10 +75,40 @@ export interface ProviderAdapterConfig {
   timeoutMs: number;
 }
 
-export interface NormalizedProviderMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
+/**
+ * A provider-neutral tool call: the model asking the *client* to run a
+ * tool. `arguments` is the raw JSON text exactly as the model produced it
+ * (never parsed or executed here — Inhouse only transports tool calls; the
+ * client remains responsible for running them).
+ */
+export interface NormalizedToolCall {
+  id: string;
+  name: string;
+  arguments: string;
 }
+
+/** A provider-neutral tool definition the client offers the model. `inputSchema` is a JSON Schema object. */
+export interface NormalizedToolDefinition {
+  name: string;
+  description: string | null;
+  inputSchema: Record<string, unknown>;
+}
+
+export type NormalizedToolChoice = "auto" | "none" | "required" | { name: string };
+
+/**
+ * One turn of a conversation. `role: "tool"` carries a tool result back to
+ * the model (the answer to an earlier assistant `toolCalls` entry with the
+ * same `toolCallId`); an assistant turn may carry `toolCalls` instead of,
+ * or alongside, text.
+ */
+export type NormalizedProviderMessage =
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string; toolCalls?: NormalizedToolCall[] }
+  | { role: "tool"; toolCallId: string; content: string };
+
+/** Provider-neutral stop semantics — each adapter maps its protocol's own values onto this fixed set. */
+export type NormalizedFinishReason = "stop" | "length" | "tool_calls" | "content_filter" | "other";
 
 /**
  * What a caller hands an adapter to execute. Intentionally excludes
@@ -94,6 +124,8 @@ export interface NormalizedProviderRequest {
   maxOutputTokens: number | null;
   temperature: number | null;
   stream: boolean;
+  tools?: NormalizedToolDefinition[];
+  toolChoice?: NormalizedToolChoice | null;
 }
 
 export interface NormalizedProviderUsage {
@@ -111,10 +143,43 @@ export interface NormalizedProviderResponse {
   providerRequestId: string | null;
   model: string;
   output: string;
-  finishReason: string | null;
+  /** Empty when the model produced no tool calls. */
+  toolCalls?: NormalizedToolCall[];
+  finishReason: NormalizedFinishReason | null;
   usage: NormalizedProviderUsage;
   latencyMs: number;
 }
+
+/**
+ * The normalized streaming vocabulary an adapter emits — never a raw
+ * provider event. `tool_call_delta`s for one call share an `index`; `id`
+ * and `name` appear on the first delta, `argumentsDelta` fragments
+ * concatenate into the JSON arguments. Exactly one terminal event
+ * (`finish` or `error`) ends every stream.
+ */
+export type NormalizedStreamEvent =
+  | { type: "text_delta"; text: string }
+  | { type: "tool_call_delta"; index: number; id?: string; name?: string; argumentsDelta?: string }
+  | {
+      type: "finish";
+      finishReason: NormalizedFinishReason | null;
+      usage: NormalizedProviderUsage;
+      providerRequestId: string | null;
+      model: string | null;
+    }
+  | { type: "error"; error: NormalizedProviderError };
+
+/**
+ * `ok: false` means the provider refused/failed *before* any stream byte
+ * was produced — the caller may still retry or fall back. Once `ok: true`,
+ * every later failure arrives as an `error` event (headers are already
+ * committed to the client, so fallback is no longer possible).
+ * `close()` releases the outbound connection; it is safe to call more
+ * than once and after normal completion.
+ */
+export type ProviderStreamResult =
+  | { ok: true; events: AsyncIterable<NormalizedStreamEvent>; close: () => void; latencyMs: number }
+  | { ok: false; error: NormalizedProviderError };
 
 /**
  * Never a raw provider response body, an authorization header, or request
@@ -163,5 +228,22 @@ export interface ProviderAdapter {
     secret: string,
     config: ProviderAdapterConfig,
     request: NormalizedProviderRequest,
+    signal?: AbortSignal,
   ): Promise<ProviderExecutionResult>;
+
+  /**
+   * Streaming counterpart of `execute()`. Optional: a protocol whose
+   * adapter does not implement it is simply not usable for streaming
+   * requests (the execution layer reports that as a configuration failure
+   * on that candidate, never a fake buffered "stream"). Bounded: every
+   * implementation must enforce an idle timeout (`config.timeoutMs`),
+   * a total byte cap and an absolute duration cap, and must stop
+   * producing work when `signal` aborts.
+   */
+  executeStream?(
+    secret: string,
+    config: ProviderAdapterConfig,
+    request: NormalizedProviderRequest,
+    signal?: AbortSignal,
+  ): Promise<ProviderStreamResult>;
 }

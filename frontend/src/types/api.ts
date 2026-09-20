@@ -371,3 +371,64 @@ export interface SystemHealthApi {
   environment: string;
   timestamp: string;
 }
+
+/**
+ * An Inhouse-issued client execution key (Block 12) — never a provider
+ * credential. `keyHash` never appears here; the raw key value only ever
+ * appears once, in `CreateApiKeyResultApi.rawKey`, at creation time.
+ */
+export interface ApiKeyApi {
+  id: string;
+  keyId: string;
+  name: string;
+  status: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  /** The workloads this key may execute against (default deny — a key with none can execute nothing). */
+  workloadIds: string[];
+}
+
+export interface CreateApiKeyPayload {
+  name: string;
+  workloadIds: string[];
+  expiresAt?: string;
+}
+
+/** The one response that ever carries the raw key — never persisted or shown again after this. */
+export interface CreateApiKeyResultApi {
+  apiKey: ApiKeyApi;
+  rawKey: string;
+}
+
+/**
+ * One row of Block 12's execution/usage ledger — never a secret, a
+ * credential, or raw request/response content (see migration 0008/0013's
+ * comments). `providerCost`/`inhouseCost` are `null` until a pricing
+ * configuration exists — never a fabricated figure.
+ */
+export interface UsageLedgerEntryApi {
+  id: string;
+  executionId: string;
+  requestId: string | null;
+  inhouseApiKeyId: string | null;
+  vendorId: string | null;
+  vendorAccountId: string | null;
+  modelId: string | null;
+  workloadId: string | null;
+  primaryTierId: string | null;
+  fallbackTierId: string | null;
+  isFallback: boolean;
+  attemptCount: number;
+  status: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  latencyMs: number | null;
+  errorCategory: string | null;
+  providerRequestId: string | null;
+  providerCost: string | null;
+  inhouseCost: string | null;
+  currency: string | null;
+  createdAt: string;
+}

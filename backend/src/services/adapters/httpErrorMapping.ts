@@ -21,6 +21,134 @@ export const MAX_REQUEST_BODY_BYTES = 2_000_000;
  */
 export const MAX_RESPONSE_BODY_BYTES = 2_000_000;
 
+/** Total bytes a single provider *stream* may deliver before it is cut off (bounded, never buffered whole — see `readSseData`). */
+export const MAX_STREAM_BYTES = 8_000_000;
+
+/** Absolute wall-clock ceiling for one provider stream, regardless of how steadily bytes keep arriving. */
+export const MAX_STREAM_DURATION_MS = 600_000;
+
+/**
+ * Owns the `AbortController` for one outbound provider call and records
+ * *why* it aborted, so the adapter can report a caller cancellation
+ * (`"cancelled"`, never retried) differently from a timeout. The timer is
+ * an idle timeout when `rearm()` is called per received chunk (streaming)
+ * and a plain request timeout otherwise. `dispose()` must always run.
+ */
+export class AbortScope {
+  private readonly controller = new AbortController();
+  private reason: "timeout" | "cancelled" | null = null;
+  private idleTimer: NodeJS.Timeout | null = null;
+  private durationTimer: NodeJS.Timeout | null = null;
+  private readonly onExternalAbort = (): void => this.abort("cancelled");
+
+  constructor(
+    private readonly external: AbortSignal | undefined,
+    private readonly timeoutMs: number,
+    maxDurationMs?: number,
+  ) {
+    if (external?.aborted) {
+      this.abort("cancelled");
+      return;
+    }
+    external?.addEventListener("abort", this.onExternalAbort, { once: true });
+    this.rearm();
+    if (maxDurationMs !== undefined) {
+      this.durationTimer = setTimeout(() => this.abort("timeout"), maxDurationMs);
+    }
+  }
+
+  get signal(): AbortSignal {
+    return this.controller.signal;
+  }
+
+  get abortReason(): "timeout" | "cancelled" | null {
+    return this.reason;
+  }
+
+  rearm(): void {
+    if (this.reason !== null) return;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => this.abort("timeout"), this.timeoutMs);
+  }
+
+  abort(reason: "timeout" | "cancelled"): void {
+    if (this.reason === null) this.reason = reason;
+    this.clearTimers();
+    this.controller.abort();
+  }
+
+  dispose(): void {
+    this.clearTimers();
+    this.external?.removeEventListener("abort", this.onExternalAbort);
+  }
+
+  private clearTimers(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    if (this.durationTimer) clearTimeout(this.durationTimer);
+    this.idleTimer = null;
+    this.durationTimer = null;
+  }
+}
+
+export class StreamLimitError extends Error {
+  constructor() {
+    super("Provider stream exceeded the maximum allowed size.");
+    this.name = "StreamLimitError";
+  }
+}
+
+/**
+ * Incrementally parses a Server-Sent-Events body into its `data:` payloads,
+ * one string per event. Never accumulates more than `maxBytes` in total
+ * (throws `StreamLimitError` past it) and re-arms the idle timeout on every
+ * received chunk. Cancels the underlying reader when the consumer stops.
+ */
+export async function* readSseData(
+  body: ReadableStream<Uint8Array>,
+  scope: AbortScope,
+  maxBytes: number,
+): AsyncGenerator<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let total = 0;
+
+  const dataOf = (rawEvent: string): string | null => {
+    const lines: string[] = [];
+    for (const line of rawEvent.split("\n")) {
+      if (line.startsWith("data:")) lines.push(line.slice(5).replace(/^ /, ""));
+    }
+    return lines.length > 0 ? lines.join("\n") : null;
+  };
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      scope.rearm();
+      total += value.byteLength;
+      if (total > maxBytes) throw new StreamLimitError();
+      buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, "\n");
+      for (let idx = buffer.indexOf("\n\n"); idx !== -1; idx = buffer.indexOf("\n\n")) {
+        const data = dataOf(buffer.slice(0, idx));
+        buffer = buffer.slice(idx + 2);
+        if (data !== null) yield data;
+      }
+    }
+    buffer += decoder.decode();
+    const trailing = buffer.trim().length > 0 ? dataOf(buffer) : null;
+    if (trailing !== null) yield trailing;
+  } finally {
+    void reader.cancel().catch(() => undefined);
+    try {
+      reader.releaseLock();
+    } catch {
+      // A still-pending cancel is harmless — the lock dies with the reader.
+    }
+  }
+}
+
 /**
  * Reads `res`'s body as UTF-8 text, refusing to buffer more than
  * `maxBytes`. Returns `null` (never throws) when the body exceeds the

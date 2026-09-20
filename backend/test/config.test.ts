@@ -6,7 +6,7 @@ test("loadConfig applies sane defaults when no env vars are set", () => {
   const config = loadConfig({} as NodeJS.ProcessEnv);
 
   assert.equal(config.environment, "development");
-  assert.equal(config.host, "0.0.0.0");
+  assert.equal(config.host, "127.0.0.1");
   assert.equal(config.port, 8092);
   assert.equal(config.logLevel, "info");
   assert.equal(config.apiPrefix, "/v1");

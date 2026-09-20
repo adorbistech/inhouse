@@ -288,3 +288,8 @@ configuration variables are documented in full in `docs/API.md`.
   Docker-assigned, loopback-only port, torn down by `npm run test:db:stop`
   (verified: no `inhouse-*` container, network, or volume remained after
   the test run completed).
+
+
+## Block 12 — administrative token
+
+`INHOUSE_ADMIN_TOKEN` (>= 32 characters, e.g. `openssl rand -hex 32`) is required in `production`/`staging`; the API refuses to start without it. It guards every control-plane route (vendors, credentials, models, workloads, routing, provider health, `/v1/api-keys*`, `/v1/usage`); only the health/readiness probes and the client-key-authenticated execution endpoints are outside it. The API binds `127.0.0.1` unless `INHOUSE_API_HOST` says otherwise (docker-compose sets `0.0.0.0` inside the container only).

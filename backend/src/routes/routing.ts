@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config/index.js";
+import { requireAdmin } from "../plugins/adminAuth.js";
 import { RoutingService } from "../services/routingService.js";
 import {
   requireUuidParam,
@@ -18,7 +19,7 @@ import {
 } from "./serializers.js";
 
 function auditContext(request: FastifyRequest) {
-  // No Inhouse authentication exists yet (see docs/API.md) — actorId will
+  // Control-plane routes are guarded by the shared admin token, which carries no principal identity — actorId will
   // be populated once a later block adds real principals.
   return { actorId: null, requestId: request.id };
 }
@@ -37,6 +38,7 @@ export function registerRoutingRoutes(app: FastifyInstance, pool: Pool, config: 
 
   app.register(
     async (versioned) => {
+      requireAdmin(versioned, config);
       versioned.get("/routing/workloads/:workloadId", async (request) => {
         const { workloadId } = request.params as { workloadId: string };
         const { workload, tiers, fallbackRules } = await service.getWorkloadRoutingConfig(

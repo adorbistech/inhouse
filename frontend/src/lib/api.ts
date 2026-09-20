@@ -1,5 +1,8 @@
 import type {
+  ApiKeyApi,
   CapabilityApi,
+  CreateApiKeyPayload,
+  CreateApiKeyResultApi,
   CreateModelPayload,
   CreateRoutingFallbackRulePayload,
   CreateRoutingTierPayload,
@@ -18,6 +21,7 @@ import type {
   UpdateRoutingFallbackRulePayload,
   UpdateRoutingTierPayload,
   UpdateVendorPayload,
+  UsageLedgerEntryApi,
   VendorAccountApi,
   VendorApi,
   VendorCredentialApi,
@@ -32,6 +36,46 @@ import type {
  * a directly-reachable backend (e.g. `http://127.0.0.1:8092/v1`).
  */
 const API_BASE_URL = (import.meta.env.VITE_INHOUSE_API_BASE_URL as string | undefined) ?? "/v1";
+
+const ADMIN_TOKEN_STORAGE_KEY = "inhouse.adminToken";
+
+/**
+ * The control-plane administrative token (Block 12/12E) guarding every
+ * control-plane call: vendors, accounts, credentials, models, workloads,
+ * capabilities, routing, provider health, API keys and usage. Held in this browser tab's
+ * `sessionStorage` only — never `localStorage`, never in the bundle, never
+ * sent anywhere except as the `Authorization` header of calls to the
+ * Inhouse API itself (never a provider, never the public health probe) — so it disappears when the tab closes. Every storage access is
+ * guarded: the page must work (as "not signed in") when storage is blocked.
+ */
+export const adminToken = {
+  get(): string | null {
+    try {
+      return sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  },
+  set(token: string): void {
+    try {
+      sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
+    } catch {
+      // Storage unavailable: the token simply is not remembered.
+    }
+  },
+  clear(): void {
+    try {
+      sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  },
+};
+
+function adminHeaders(): Record<string, string> {
+  const token = adminToken.get();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export class ApiError extends Error {
   constructor(
@@ -49,10 +93,17 @@ interface ErrorBody {
   error?: { code?: string; message?: string; requestId?: string };
 }
 
+/** Infrastructure probes the backend leaves unauthenticated; they never carry the admin token. */
+const PUBLIC_PATHS = new Set(["/health", "/ready"]);
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(PUBLIC_PATHS.has(path) ? {} : adminHeaders()),
+      ...(init.headers ?? {}),
+    },
   });
 
   if (res.status === 204) {
@@ -266,4 +317,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  // --- Execution & Claude Integration (Block 12) ---
+
+  listApiKeys: () => request<{ apiKeys: ApiKeyApi[] }>("/api-keys"),
+
+  createApiKey: (payload: CreateApiKeyPayload) =>
+    request<CreateApiKeyResultApi>("/api-keys", { method: "POST", body: JSON.stringify(payload) }),
+
+  setApiKeyWorkloads: (id: string, workloadIds: string[]) =>
+    request<{ apiKey: ApiKeyApi }>(`/api-keys/${id}/workloads`, {
+      method: "PUT",
+      body: JSON.stringify({ workloadIds }),
+    }),
+
+  revokeApiKey: (id: string) =>
+    request<{ apiKey: ApiKeyApi }>(`/api-keys/${id}`, { method: "DELETE" }),
+
+  listUsage: (limit?: number) =>
+    request<{ usage: UsageLedgerEntryApi[] }>(`/usage${limit ? `?limit=${limit}` : ""}`),
 };

@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config/index.js";
+import { requireAdmin } from "../plugins/adminAuth.js";
 import type { CredentialVaultService } from "../lib/credentialVault.js";
 import type { VendorCredentialRow, VendorRow } from "../repositories/types.js";
 import { type AdapterRegistry, createDefaultAdapterRegistry } from "../services/adapters/adapterRegistry.js";
@@ -50,7 +51,7 @@ function toCredentialResponse(credential: VendorCredentialRow) {
 }
 
 function auditContext(request: FastifyRequest) {
-  // No Inhouse authentication exists yet (see docs/API.md) — actorId will
+  // Control-plane routes are guarded by the shared admin token, which carries no principal identity — actorId will
   // be populated once a later block adds real principals.
   return { actorId: null, requestId: request.id };
 }
@@ -70,6 +71,7 @@ export function registerVendorRoutes(
 
   app.register(
     async (versioned) => {
+      requireAdmin(versioned, config);
       versioned.get("/vendors", async (request) => {
         const query = request.query as { status?: string };
         const vendors = await service.list({ status: query.status });

@@ -272,6 +272,8 @@ test("usage ledger entries persist execution metadata", async () => {
     const repo = new UsageLedgerRepository(pool);
 
     const entry = await repo.create({
+      execution_id: "11111111-1111-1111-1111-111111111111",
+      request_id: "test-request-id",
       inhouse_api_key_id: null,
       vendor_id: null,
       vendor_account_id: null,
@@ -280,12 +282,14 @@ test("usage ledger entries persist execution metadata", async () => {
       primary_tier_id: null,
       fallback_tier_id: null,
       is_fallback: false,
+      attempt_count: 1,
       status: "success",
       input_tokens: 100,
       output_tokens: 50,
       total_tokens: 150,
       latency_ms: 820,
       error_category: null,
+      provider_request_id: null,
       provider_cost: "0.002500",
       inhouse_cost: "0.003000",
       currency: "USD",

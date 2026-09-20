@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config/index.js";
+import { requireAdmin } from "../plugins/adminAuth.js";
 import { ProviderHealthService } from "../services/providerHealthService.js";
 import { requireUuidParam, validateHealthHistoryQuery } from "../validation/providerHealth.js";
 import { toProviderHealthEventResponse, toProviderHealthResponse } from "./serializers.js";
@@ -18,6 +19,7 @@ export function registerProviderHealthRoutes(app: FastifyInstance, pool: Pool, c
 
   app.register(
     async (versioned) => {
+      requireAdmin(versioned, config);
       versioned.get("/vendors/:id/accounts/:accountId/health", async (request) => {
         const { id, accountId } = request.params as { id: string; accountId: string };
         const health = await service.getCurrentHealth(requireUuidParam(id, "id"), requireUuidParam(accountId, "accountId"));

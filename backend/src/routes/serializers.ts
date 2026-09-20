@@ -1,8 +1,10 @@
 import type {
   CapabilityRow,
+  InhouseApiKeyRow,
   ModelRow,
   RoutingFallbackRuleRow,
   RoutingTierRow,
+  UsageLedgerRow,
   VendorAccountHealthEventRow,
   VendorAccountHealthRow,
   VendorAccountRow,
@@ -12,6 +14,58 @@ import type {
 import type { RoutingDecision } from "../services/routingService.js";
 import type { ModelDetail } from "../services/modelService.js";
 import type { VendorDetail } from "../services/vendorService.js";
+
+/**
+ * Never `key_hash` — the one-way hash is an internal authentication
+ * artifact, not something any response ever needs, and the raw key itself
+ * is never persisted anywhere to serialize in the first place (see
+ * `lib/apiKeyGenerator.ts`/`lib/apiKeyHash.ts`).
+ */
+export function toApiKeyResponse(key: InhouseApiKeyRow, workloadIds: string[] = []) {
+  return {
+    id: key.id,
+    keyId: key.key_id,
+    name: key.name,
+    status: key.status,
+    createdAt: key.created_at,
+    lastUsedAt: key.last_used_at,
+    expiresAt: key.expires_at,
+    workloadIds,
+  };
+}
+
+/**
+ * Usage ledger rows never carry secret material (see migration 0008's
+ * comment), so this is a direct camelCase projection — nothing to
+ * redact, unlike `toCredentialResponse`/`toApiKeyResponse`.
+ */
+export function toUsageLedgerResponse(entry: UsageLedgerRow) {
+  return {
+    id: entry.id,
+    executionId: entry.execution_id,
+    requestId: entry.request_id,
+    inhouseApiKeyId: entry.inhouse_api_key_id,
+    vendorId: entry.vendor_id,
+    vendorAccountId: entry.vendor_account_id,
+    modelId: entry.model_id,
+    workloadId: entry.workload_id,
+    primaryTierId: entry.primary_tier_id,
+    fallbackTierId: entry.fallback_tier_id,
+    isFallback: entry.is_fallback,
+    attemptCount: entry.attempt_count,
+    status: entry.status,
+    inputTokens: entry.input_tokens,
+    outputTokens: entry.output_tokens,
+    totalTokens: entry.total_tokens,
+    latencyMs: entry.latency_ms,
+    errorCategory: entry.error_category,
+    providerRequestId: entry.provider_request_id,
+    providerCost: entry.provider_cost,
+    inhouseCost: entry.inhouse_cost,
+    currency: entry.currency,
+    createdAt: entry.created_at,
+  };
+}
 
 /**
  * Every Vendor System HTTP response is camelCase, regardless of the

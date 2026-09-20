@@ -243,6 +243,8 @@ export type NewInhouseApiKey = Omit<InhouseApiKeyRow, "id" | "created_at" | "las
 
 export interface UsageLedgerRow {
   id: string;
+  execution_id: string;
+  request_id: string | null;
   inhouse_api_key_id: string | null;
   vendor_id: string | null;
   vendor_account_id: string | null;
@@ -251,12 +253,14 @@ export interface UsageLedgerRow {
   primary_tier_id: string | null;
   fallback_tier_id: string | null;
   is_fallback: boolean;
+  attempt_count: number;
   status: string;
   input_tokens: number | null;
   output_tokens: number | null;
   total_tokens: number | null;
   latency_ms: number | null;
   error_category: string | null;
+  provider_request_id: string | null;
   provider_cost: string | null;
   inhouse_cost: string | null;
   currency: string | null;

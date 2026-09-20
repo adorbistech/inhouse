@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ADMIN } from "./helpers.js";
 import { test } from "node:test";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
@@ -21,13 +22,13 @@ const sampleVendorPayload = {
 };
 
 async function createVendor(app: FastifyInstance, overrides: Record<string, unknown> = {}) {
-  const res = await app.inject({ method: "POST", url: "/v1/vendors", payload: { ...sampleVendorPayload, ...overrides } });
+  const res = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/vendors", payload: { ...sampleVendorPayload, ...overrides } });
   assert.equal(res.statusCode, 201, `createVendor failed: ${res.body}`);
   return res.json().vendor;
 }
 
 async function createModel(app: FastifyInstance, vendorId: string, overrides: Record<string, unknown> = {}) {
-  const res = await app.inject({
+  const res = await app.inject({ headers: ADMIN,
     method: "POST",
     url: "/v1/models",
     payload: {
@@ -53,7 +54,7 @@ async function createWorkload(pool: Pool, overrides: Record<string, unknown> = {
 }
 
 async function attachVendorToWorkload(app: FastifyInstance, vendorId: string, workloadId: string) {
-  const res = await app.inject({
+  const res = await app.inject({ headers: ADMIN,
     method: "PUT",
     url: `/v1/vendors/${vendorId}/workloads`,
     payload: { workloadIds: [workloadId] },
@@ -62,7 +63,7 @@ async function attachVendorToWorkload(app: FastifyInstance, vendorId: string, wo
 }
 
 async function attachModelToWorkload(app: FastifyInstance, modelId: string, workloadId: string) {
-  const res = await app.inject({
+  const res = await app.inject({ headers: ADMIN,
     method: "PUT",
     url: `/v1/models/${modelId}/workloads`,
     payload: { workloadIds: [workloadId] },
@@ -92,7 +93,7 @@ async function createTier(
   workloadId: string,
   payload: Record<string, unknown>,
 ) {
-  const res = await app.inject({
+  const res = await app.inject({ headers: ADMIN,
     method: "POST",
     url: `/v1/routing/workloads/${workloadId}/tiers`,
     payload,
@@ -107,11 +108,11 @@ test("GET /v1/routing/workloads/:workloadId/tiers is empty before any tier exist
     await truncateAll(pool, "inhouse");
     const workload = await createWorkload(pool);
 
-    const res = await app.inject({ method: "GET", url: `/v1/routing/workloads/${workload.id}/tiers` });
+    const res = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/routing/workloads/${workload.id}/tiers` });
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.json().tiers, []);
 
-    const missing = await app.inject({ method: "GET", url: `/v1/routing/workloads/${MISSING_ID}/tiers` });
+    const missing = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/routing/workloads/${MISSING_ID}/tiers` });
     assert.equal(missing.statusCode, 404);
     assert.equal(missing.json().error.code, "NOT_FOUND");
   });
@@ -133,7 +134,7 @@ test("POST .../tiers creates a tier once vendor+model are assigned to the worklo
     assert.equal(tier.priority, 5);
     assert.equal(tier.enabled, true);
 
-    const list = await app.inject({ method: "GET", url: `/v1/routing/workloads/${workload.id}/tiers` });
+    const list = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/routing/workloads/${workload.id}/tiers` });
     assert.equal(list.json().tiers.length, 1);
   });
 });
@@ -203,7 +204,7 @@ test("PATCH .../tiers/:tierId updates fields; empty patch is rejected; DELETE so
     const { vendor, model } = await buildEligibleCandidate(app, workload.id);
     const tier = (await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 1 })).json().tier;
 
-    const patch = await app.inject({
+    const patch = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/routing/workloads/${workload.id}/tiers/${tier.id}`,
       payload: { priority: 9, maxAttempts: 5 },
@@ -212,14 +213,14 @@ test("PATCH .../tiers/:tierId updates fields; empty patch is rejected; DELETE so
     assert.equal(patch.json().tier.priority, 9);
     assert.equal(patch.json().tier.maxAttempts, 5);
 
-    const emptyPatch = await app.inject({
+    const emptyPatch = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/routing/workloads/${workload.id}/tiers/${tier.id}`,
       payload: {},
     });
     assert.equal(emptyPatch.statusCode, 400);
 
-    const del = await app.inject({ method: "DELETE", url: `/v1/routing/workloads/${workload.id}/tiers/${tier.id}` });
+    const del = await app.inject({ headers: ADMIN, method: "DELETE", url: `/v1/routing/workloads/${workload.id}/tiers/${tier.id}` });
     assert.equal(del.statusCode, 200);
     assert.equal(del.json().tier.enabled, false);
 
@@ -238,7 +239,7 @@ test("PATCH/DELETE .../tiers/:tierId 404s when the tier does not belong to the g
     const { vendor, model } = await buildEligibleCandidate(app, workload.id);
     const tier = (await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 1 })).json().tier;
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/routing/workloads/${otherWorkload.id}/tiers/${tier.id}`,
       payload: { priority: 1 },
@@ -259,7 +260,7 @@ test("Fallback rules: create, patch, and soft-disable; cross-workload and self-r
     const tier1 = (await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 1 })).json().tier;
     const tier2 = (await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 2 })).json().tier;
 
-    const created = await app.inject({
+    const created = await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/routing/workloads/${workload.id}/fallback-rules`,
       payload: { fromTierId: tier1.id, toTierId: tier2.id, conditionType: "on_timeout", conditionConfig: { thresholdMs: 5000 } },
@@ -269,7 +270,7 @@ test("Fallback rules: create, patch, and soft-disable; cross-workload and self-r
     assert.equal(rule.fromTierId, tier1.id);
     assert.equal(rule.toTierId, tier2.id);
 
-    const selfRef = await app.inject({
+    const selfRef = await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/routing/workloads/${workload.id}/fallback-rules`,
       payload: { fromTierId: tier1.id, toTierId: tier1.id, conditionType: "on_timeout" },
@@ -281,14 +282,14 @@ test("Fallback rules: create, patch, and soft-disable; cross-workload and self-r
       await createTier(app, otherWorkload.id, { vendorId: independentOther.vendor.id, modelId: independentOther.model.id, tierNumber: 1 })
     ).json().tier;
 
-    const crossWorkload = await app.inject({
+    const crossWorkload = await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/routing/workloads/${workload.id}/fallback-rules`,
       payload: { fromTierId: tier1.id, toTierId: crossTier.id, conditionType: "on_timeout" },
     });
     assert.equal(crossWorkload.statusCode, 404);
 
-    const patch = await app.inject({
+    const patch = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/routing/workloads/${workload.id}/fallback-rules/${rule.id}`,
       payload: { priority: 7 },
@@ -296,11 +297,11 @@ test("Fallback rules: create, patch, and soft-disable; cross-workload and self-r
     assert.equal(patch.statusCode, 200);
     assert.equal(patch.json().fallbackRule.priority, 7);
 
-    const del = await app.inject({ method: "DELETE", url: `/v1/routing/workloads/${workload.id}/fallback-rules/${rule.id}` });
+    const del = await app.inject({ headers: ADMIN, method: "DELETE", url: `/v1/routing/workloads/${workload.id}/fallback-rules/${rule.id}` });
     assert.equal(del.statusCode, 200);
     assert.equal(del.json().fallbackRule.enabled, false);
 
-    const list = await app.inject({ method: "GET", url: `/v1/routing/workloads/${workload.id}/fallback-rules` });
+    const list = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/routing/workloads/${workload.id}/fallback-rules` });
     assert.equal(list.json().fallbackRules.length, 1);
   });
 });
@@ -312,7 +313,7 @@ test("GET /v1/routing/workloads/:workloadId returns the combined workload + tier
     const { vendor, model } = await buildEligibleCandidate(app, workload.id);
     await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 1 });
 
-    const res = await app.inject({ method: "GET", url: `/v1/routing/workloads/${workload.id}` });
+    const res = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/routing/workloads/${workload.id}` });
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.equal(body.workload.id, workload.id);
@@ -326,7 +327,7 @@ test("GET /v1/routing/workloads/:workloadId returns the combined workload + tier
 test("POST /v1/routing/preview 404s for an unknown workload", async () => {
   await withMigratedApp(async (app, pool) => {
     await truncateAll(pool, "inhouse");
-    const res = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: MISSING_ID } });
+    const res = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: MISSING_ID } });
     assert.equal(res.statusCode, 404);
   });
 });
@@ -335,7 +336,7 @@ test("preview reports 'no_tiers_configured' when a workload has no routing tiers
   await withMigratedApp(async (app, pool) => {
     await truncateAll(pool, "inhouse");
     const workload = await createWorkload(pool);
-    const res = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
+    const res = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
     assert.equal(res.statusCode, 200);
     const decision = res.json().decision;
     assert.equal(decision.outcome, "no_tiers_configured");
@@ -351,7 +352,7 @@ test("preview selects the single eligible candidate, with health 'unknown' when 
     const { vendor, model } = await buildEligibleCandidate(app, workload.id);
     const tier = (await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 1 })).json().tier;
 
-    const res = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
+    const res = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
     const decision = res.json().decision;
     assert.equal(decision.outcome, "selected");
     assert.equal(decision.candidates.length, 1);
@@ -369,7 +370,7 @@ test("preview excludes a disabled tier with reason 'tier_disabled'", async () =>
     const { vendor, model } = await buildEligibleCandidate(app, workload.id);
     await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 1, enabled: false });
 
-    const res = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
+    const res = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
     const decision = res.json().decision;
     assert.equal(decision.outcome, "no_eligible_candidate");
     assert.equal(decision.candidates[0].eligible, false);
@@ -384,14 +385,14 @@ test("preview excludes a disabled vendor/model with the matching reason", async 
     const { vendor, model } = await buildEligibleCandidate(app, workload.id);
     await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 1 });
 
-    await app.inject({ method: "DELETE", url: `/v1/vendors/${vendor.id}` }); // soft-disable
-    const res = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
+    await app.inject({ headers: ADMIN, method: "DELETE", url: `/v1/vendors/${vendor.id}` }); // soft-disable
+    const res = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
     const decision = res.json().decision;
     assert.ok(decision.candidates[0].reasons.includes("vendor_disabled"));
 
-    await app.inject({ method: "PATCH", url: `/v1/vendors/${vendor.id}`, payload: { status: "enabled" } });
-    await app.inject({ method: "DELETE", url: `/v1/models/${model.id}` });
-    const res2 = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
+    await app.inject({ headers: ADMIN, method: "PATCH", url: `/v1/vendors/${vendor.id}`, payload: { status: "enabled" } });
+    await app.inject({ headers: ADMIN, method: "DELETE", url: `/v1/models/${model.id}` });
+    const res2 = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
     assert.ok(res2.json().decision.candidates[0].reasons.includes("model_disabled"));
   });
 });
@@ -405,7 +406,7 @@ test("preview honors a requested modelId, excluding non-matching tiers", async (
     await createTier(app, workload.id, { vendorId: first.vendor.id, modelId: first.model.id, tierNumber: 1 });
     await createTier(app, workload.id, { vendorId: second.vendor.id, modelId: second.model.id, tierNumber: 2 });
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/routing/preview",
       payload: { workloadId: workload.id, modelId: second.model.id },
@@ -422,14 +423,14 @@ test("preview rejects an unknown requested modelId/capabilityId with 400", async
   await withMigratedApp(async (app, pool) => {
     await truncateAll(pool, "inhouse");
     const workload = await createWorkload(pool);
-    const badModel = await app.inject({
+    const badModel = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/routing/preview",
       payload: { workloadId: workload.id, modelId: MISSING_ID },
     });
     assert.equal(badModel.statusCode, 400);
 
-    const badCapability = await app.inject({
+    const badCapability = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/routing/preview",
       payload: { workloadId: workload.id, capabilityIds: [MISSING_ID] },
@@ -451,7 +452,7 @@ test("preview enforces capability requirements against model/vendor capability a
       description: null,
     });
 
-    const withoutCapability = await app.inject({
+    const withoutCapability = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/routing/preview",
       payload: { workloadId: workload.id, capabilityIds: [capability.id] },
@@ -460,13 +461,13 @@ test("preview enforces capability requirements against model/vendor capability a
     assert.equal(decisionMissing.outcome, "no_eligible_candidate");
     assert.ok(decisionMissing.candidates[0].reasons.includes(`capability_not_supported:${capability.id}`));
 
-    await app.inject({
+    await app.inject({ headers: ADMIN,
       method: "PUT",
       url: `/v1/models/${model.id}/capabilities`,
       payload: { capabilityIds: [capability.id] },
     });
 
-    const withCapability = await app.inject({
+    const withCapability = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/routing/preview",
       payload: { workloadId: workload.id, capabilityIds: [capability.id] },
@@ -482,7 +483,7 @@ test("preview health: a healthy account makes the candidate eligible with health
     const { vendor, model } = await buildEligibleCandidate(app, workload.id);
     await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 1 });
 
-    const account = (await app.inject({ method: "POST", url: `/v1/vendors/${vendor.id}/accounts`, payload: { slug: "acct-1", displayName: "Account 1" } })).json().account;
+    const account = (await app.inject({ headers: ADMIN, method: "POST", url: `/v1/vendors/${vendor.id}/accounts`, payload: { slug: "acct-1", displayName: "Account 1" } })).json().account;
     await new VendorAccountHealthRepository(pool).upsert({
       vendor_account_id: account.id,
       status: "healthy",
@@ -495,7 +496,7 @@ test("preview health: a healthy account makes the candidate eligible with health
       last_safe_error_code: null,
     });
 
-    const res = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
+    const res = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
     const decision = res.json().decision;
     assert.equal(decision.selectedCandidate.health, "healthy");
     assert.equal(decision.selectedCandidate.accounts[0].health, "healthy");
@@ -509,7 +510,7 @@ test("preview health: an unhealthy-only vendor is excluded with reason 'vendor_u
     const { vendor, model } = await buildEligibleCandidate(app, workload.id);
     await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 1 });
 
-    const account = (await app.inject({ method: "POST", url: `/v1/vendors/${vendor.id}/accounts`, payload: { slug: "acct-1", displayName: "Account 1" } })).json().account;
+    const account = (await app.inject({ headers: ADMIN, method: "POST", url: `/v1/vendors/${vendor.id}/accounts`, payload: { slug: "acct-1", displayName: "Account 1" } })).json().account;
     await new VendorAccountHealthRepository(pool).upsert({
       vendor_account_id: account.id,
       status: "unhealthy",
@@ -522,7 +523,7 @@ test("preview health: an unhealthy-only vendor is excluded with reason 'vendor_u
       last_safe_error_code: "ETIMEDOUT",
     });
 
-    const res = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
+    const res = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
     const decision = res.json().decision;
     assert.equal(decision.outcome, "no_eligible_candidate");
     assert.ok(decision.candidates[0].reasons.includes("vendor_unhealthy"));
@@ -536,7 +537,7 @@ test("preview health: a degraded account keeps the candidate eligible (degraded 
     const { vendor, model } = await buildEligibleCandidate(app, workload.id);
     await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 1 });
 
-    const account = (await app.inject({ method: "POST", url: `/v1/vendors/${vendor.id}/accounts`, payload: { slug: "acct-1", displayName: "Account 1" } })).json().account;
+    const account = (await app.inject({ headers: ADMIN, method: "POST", url: `/v1/vendors/${vendor.id}/accounts`, payload: { slug: "acct-1", displayName: "Account 1" } })).json().account;
     await new VendorAccountHealthRepository(pool).upsert({
       vendor_account_id: account.id,
       status: "degraded",
@@ -549,7 +550,7 @@ test("preview health: a degraded account keeps the candidate eligible (degraded 
       last_safe_error_code: "429",
     });
 
-    const res = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
+    const res = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
     const decision = res.json().decision;
     assert.equal(decision.outcome, "selected");
     assert.equal(decision.selectedCandidate.health, "degraded");
@@ -567,7 +568,7 @@ test("deterministic ordering: tier_number always outranks priority, and ties bre
     const tier1 = (await createTier(app, workload.id, { vendorId: low.vendor.id, modelId: low.model.id, tierNumber: 1, priority: 0 })).json().tier;
     await createTier(app, workload.id, { vendorId: high.vendor.id, modelId: high.model.id, tierNumber: 2, priority: 100 });
 
-    const res1 = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
+    const res1 = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
     assert.equal(res1.json().decision.selectedCandidate.tierId, tier1.id);
 
     // Two candidates at the same tier_number: higher priority wins.
@@ -577,7 +578,7 @@ test("deterministic ordering: tier_number always outranks priority, and ties bre
     await createTier(app, workload2.id, { vendorId: a.vendor.id, modelId: a.model.id, tierNumber: 1, priority: 1 });
     const bTier = (await createTier(app, workload2.id, { vendorId: b.vendor.id, modelId: b.model.id, tierNumber: 1, priority: 9 })).json().tier;
 
-    const res2 = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload2.id } });
+    const res2 = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload2.id } });
     assert.equal(res2.json().decision.selectedCandidate.tierId, bTier.id);
 
     // A true tie (same tier_number, same priority) breaks on tier id, deterministically across repeated calls.
@@ -588,8 +589,8 @@ test("deterministic ordering: tier_number always outranks priority, and ties bre
     const dTier = (await createTier(app, workload3.id, { vendorId: d.vendor.id, modelId: d.model.id, tierNumber: 1, priority: 5 })).json().tier;
     const expectedWinner = [cTier.id, dTier.id].sort()[0];
 
-    const run1 = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload3.id } });
-    const run2 = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload3.id } });
+    const run1 = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload3.id } });
+    const run2 = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload3.id } });
     assert.equal(run1.json().decision.selectedCandidate.tierId, expectedWinner);
     assert.equal(run2.json().decision.selectedCandidate.tierId, expectedWinner);
   });
@@ -602,7 +603,7 @@ test("preview never writes a usage ledger entry or a health event, and includes 
     const { vendor, model } = await buildEligibleCandidate(app, workload.id);
     const tier1 = (await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 1 })).json().tier;
     const tier2 = (await createTier(app, workload.id, { vendorId: vendor.id, modelId: model.id, tierNumber: 2 })).json().tier;
-    await app.inject({
+    await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/routing/workloads/${workload.id}/fallback-rules`,
       payload: { fromTierId: tier1.id, toTierId: tier2.id, conditionType: "on_timeout" },
@@ -611,7 +612,7 @@ test("preview never writes a usage ledger entry or a health event, and includes 
     const before = await pool.query("SELECT count(*)::int AS n FROM usage_ledger");
     const beforeHealthEvents = await pool.query("SELECT count(*)::int AS n FROM vendor_account_health_events");
 
-    const res = await app.inject({ method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
+    const res = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/routing/preview", payload: { workloadId: workload.id } });
     const decision = res.json().decision;
     assert.equal(decision.fallbackRules.length, 1);
     assert.equal(decision.selectedCandidate.outgoingFallbackRules.length, 1);

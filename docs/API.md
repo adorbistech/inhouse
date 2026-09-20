@@ -56,10 +56,9 @@ matters going forward:
   ledger/health-event row. See "Routing Policy (Block 11)" below and
   `docs/ROUTING_POLICY.md`.
   See `docs/PROVIDER_ADAPTERS.md`.
-- **No route implements authentication.** Every endpoint below, including
-  the Vendor System and Model Catalog, is unauthenticated in this block
-  (see "Authentication"). Block 08's vault protects *provider* credentials
-  at rest; it is not Inhouse API authentication.
+- **Every control-plane route requires the administrative token** (Block
+  12E; see "Authentication"). Block 08's vault protects *provider*
+  credentials at rest; it is not Inhouse API authentication.
 
 ## Service Purpose
 
@@ -128,8 +127,8 @@ checking it and can diverge from `/health`.
 
 All Vendor System responses are JSON, camelCase, and share the standard
 error format below on failure. Every route lives under `/v1` and, like
-every route in this API, is currently unauthenticated (see
-"Authentication"). Full schema/persistence detail is in
+every control-plane route, requires `Authorization: Bearer
+<INHOUSE_ADMIN_TOKEN>` (see "Authentication"). Full schema/persistence detail is in
 `docs/DATABASE.md`; this section documents the HTTP contract only.
 
 **Scope:** this block persists vendor *configuration* — it does not call
@@ -296,8 +295,8 @@ history. See `docs/PROVIDER_HEALTH.md`.
 
 All Model Catalog responses are JSON, camelCase, and share the standard
 error format below on failure. Every route lives under `/v1` and, like
-every route in this API, is currently unauthenticated (see
-"Authentication"). Full schema/persistence detail is in
+every control-plane route, requires `Authorization: Bearer
+<INHOUSE_ADMIN_TOKEN>` (see "Authentication"). Full schema/persistence detail is in
 `docs/DATABASE.md`; this section documents the HTTP contract only.
 
 **Scope:** this block persists model *configuration* — which
@@ -356,8 +355,8 @@ recorded to `audit_events` (`model.created`, `model.updated`,
 ## Routing Policy (Block 11)
 
 All Routing Policy responses are JSON, camelCase, and share the standard
-error format below on failure. Every route lives under `/v1` and is
-currently unauthenticated (see "Authentication"). Full schema/eligibility
+error format below on failure. Every route lives under `/v1` and requires
+the administrative token (see "Authentication"). Full schema/eligibility
 detail is in `docs/ROUTING_POLICY.md`; this section documents the HTTP
 contract only.
 
@@ -501,12 +500,23 @@ are enabled — see `docs/CREDENTIAL_VAULT.md`.
 
 ## Authentication
 
-**AUTHENTICATION IS NOT IMPLEMENTED YET.** Every route in this block is
-unauthenticated. The health/readiness endpoints are intended to stay
-public/internal-only even after authentication is added elsewhere, but no
-route in this API should be treated as production-secure until a later
-block adds real authentication and authorization. Do not expose this
-service beyond `127.0.0.1` / the internal Docker network until then.
+Two separate trust boundaries, never interchangeable:
+
+- **Control plane** — every route except the four below (vendors, accounts,
+  credentials, capabilities, workloads, models, routing, provider health,
+  `/v1/api-keys*`, `/v1/usage`) requires `Authorization: Bearer
+  <INHOUSE_ADMIN_TOKEN>`. Missing or wrong token: 401 `UNAUTHENTICATED`
+  (checked before body validation). No token configured on the server: 503
+  `ADMIN_AUTH_NOT_CONFIGURED` (fail closed). The guard is one shared
+  `onRequest` hook (`requireAdmin`, `plugins/adminAuth.ts`) applied per route
+  module.
+- **Execution plane** — `POST /v1/chat/completions` and `POST /v1/messages`
+  require an `ihk_…` client API key and workload authorization; see
+  [EXECUTION.md](EXECUTION.md).
+- **Public** — `GET /health`, `/ready`, `/v1/health`, `/v1/ready` (Docker
+  health checks); no credential.
+
+Binding to `127.0.0.1` is defense in depth, not authorization.
 
 ## Logging
 
@@ -515,3 +525,8 @@ route, status code, and response time. `Authorization` and `Cookie`
 request headers, `x-api-key`, and common credential-shaped body fields
 (`password`, `token`, `apiKey`, `secret`) are redacted (`[Redacted]`) at
 the logger level — never written to logs, even at debug level.
+
+
+## Execution & API keys (Block 12)
+
+See [EXECUTION.md](EXECUTION.md) for `POST /v1/chat/completions`, `POST /v1/messages` (client-key authenticated, workload-scoped, streaming and tool-capable) and the admin-token-guarded `/v1/api-keys*` and `/v1/usage`.

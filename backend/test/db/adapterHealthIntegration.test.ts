@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ADMIN } from "./helpers.js";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
@@ -56,7 +57,7 @@ async function startMockProviderServer(behavior: "healthy" | "unauthorized" | "s
 
 async function setUpVendorAccountAndManagedCredential(app: import("fastify").FastifyInstance, baseEndpoint: string) {
   const vendor = (
-    await app.inject({
+    await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/vendors",
       payload: {
@@ -71,14 +72,14 @@ async function setUpVendorAccountAndManagedCredential(app: import("fastify").Fas
     })
   ).json().vendor;
   const account = (
-    await app.inject({
+    await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/vendors/${vendor.id}/accounts`,
       payload: { slug: "primary", displayName: "Primary Account" },
     })
   ).json().account;
   const credential = (
-    await app.inject({
+    await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/vendors/${vendor.id}/credentials`,
       payload: { vendorAccountId: account.id, credentialType: "api_key", secret: REAL_SECRET },
@@ -112,7 +113,7 @@ test("adapter checkHealth() + credentialSecretAccess + ProviderHealthService com
         checkedAt: new Date(),
       });
 
-      const healthRes = await app.inject({ method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health` });
+      const healthRes = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health` });
       assert.equal(healthRes.json().health.status, "healthy");
 
       assert.equal(server.receivedAuthHeaders[0], `Bearer ${REAL_SECRET}`);
@@ -147,7 +148,7 @@ test("an unauthorized provider response becomes a normalized 'authentication' he
         source: "adapter",
         checkedAt: new Date(),
       });
-      const eventsRes = await app.inject({
+      const eventsRes = await app.inject({ headers: ADMIN,
         method: "GET",
         url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health/events`,
       });
@@ -190,7 +191,7 @@ test("disabling a credential makes it unusable for a health check, exactly as Bl
     await withMigratedApp(async (app, pool) => {
       await truncateAll(pool, "inhouse");
       const { vendor, credential } = await setUpVendorAccountAndManagedCredential(app, server.baseEndpoint);
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "PATCH",
         url: `/v1/vendors/${vendor.id}/credentials/${credential.id}`,
         payload: { status: "disabled" },

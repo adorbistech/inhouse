@@ -8,6 +8,8 @@ export interface AppConfig {
   apiPrefix: string;
   bodyLimitBytes: number;
   corsAllowedOrigins: string[];
+  /** Bearer token guarding the control-plane routes that mint/manage client keys and read telemetry. Null = those routes fail closed (503). */
+  adminToken: string | null;
 }
 
 const ALLOWED_ENVIRONMENTS: Environment[] = ["development", "test", "staging", "production"];
@@ -61,19 +63,42 @@ function parseCorsOrigins(value: string | undefined): string[] {
     .filter((origin) => origin.length > 0);
 }
 
+const MIN_ADMIN_TOKEN_LENGTH = 32;
+
+function parseAdminToken(value: string | undefined, environment: Environment): string | null {
+  const token = value?.trim();
+  if (!token) {
+    if (environment === "production" || environment === "staging") {
+      throw new Error(
+        "INHOUSE_ADMIN_TOKEN is required in production/staging (it guards every control-plane route). " +
+          "Generate one with: openssl rand -hex 32",
+      );
+    }
+    return null;
+  }
+  if (token.length < MIN_ADMIN_TOKEN_LENGTH) {
+    throw new Error(`INHOUSE_ADMIN_TOKEN must be at least ${MIN_ADMIN_TOKEN_LENGTH} characters.`);
+  }
+  return token;
+}
+
 /**
  * Loads and validates process environment into a typed config. Throws on any
  * invalid value so misconfiguration fails fast at startup rather than
  * producing undefined runtime behavior.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const environment = parseEnvironment(env.INHOUSE_API_ENV ?? env.NODE_ENV);
   return {
-    environment: parseEnvironment(env.INHOUSE_API_ENV ?? env.NODE_ENV),
-    host: env.INHOUSE_API_HOST ?? "0.0.0.0",
+    environment,
+    // Loopback by default: exposing the API beyond the host is an explicit,
+    // deliberate deployment decision (docker-compose sets it for the container).
+    host: env.INHOUSE_API_HOST ?? "127.0.0.1",
     port: parsePort(env.INHOUSE_API_PORT),
     logLevel: parseLogLevel(env.INHOUSE_API_LOG_LEVEL),
     apiPrefix: env.INHOUSE_API_PREFIX ?? "/v1",
     bodyLimitBytes: parseBodyLimit(env.INHOUSE_API_BODY_LIMIT),
     corsAllowedOrigins: parseCorsOrigins(env.INHOUSE_API_CORS_ORIGINS),
+    adminToken: parseAdminToken(env.INHOUSE_ADMIN_TOKEN, environment),
   };
 }

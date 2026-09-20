@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ADMIN } from "./helpers.js";
 import { test } from "node:test";
 import { withMigratedApp, truncateAll } from "./helpers.js";
 import { CapabilitiesRepository } from "../../src/repositories/capabilitiesRepository.js";
@@ -14,7 +15,7 @@ const sampleVendorPayload = {
 };
 
 async function createVendor(app: import("fastify").FastifyInstance, overrides: Record<string, unknown> = {}) {
-  const res = await app.inject({
+  const res = await app.inject({ headers: ADMIN,
     method: "POST",
     url: "/v1/vendors",
     payload: { ...sampleVendorPayload, ...overrides },
@@ -36,7 +37,7 @@ const MISSING_ID = "00000000-0000-0000-0000-000000000000";
 test("GET /v1/models returns an empty list before any model exists", async () => {
   await withMigratedApp(async (app, pool) => {
     await truncateAll(pool, "inhouse");
-    const res = await app.inject({ method: "GET", url: "/v1/models" });
+    const res = await app.inject({ headers: ADMIN, method: "GET", url: "/v1/models" });
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.json().models, []);
   });
@@ -47,7 +48,7 @@ test("POST /v1/models creates a model and GET /v1/models lists it", async () => 
     await truncateAll(pool, "inhouse");
     const vendor = await createVendor(app);
 
-    const createRes = await app.inject({
+    const createRes = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/models",
       payload: sampleModelPayload(vendor.id),
@@ -59,7 +60,7 @@ test("POST /v1/models creates a model and GET /v1/models lists it", async () => 
     assert.equal(created.status, "enabled");
     assert.deepEqual(created.capabilities, []);
 
-    const listRes = await app.inject({ method: "GET", url: "/v1/models" });
+    const listRes = await app.inject({ headers: ADMIN, method: "GET", url: "/v1/models" });
     assert.equal(listRes.json().models.length, 1);
     assert.equal(listRes.json().models[0].id, created.id);
   });
@@ -70,14 +71,14 @@ test("GET /v1/models/:id returns model detail; 404 for a missing model", async (
     await truncateAll(pool, "inhouse");
     const vendor = await createVendor(app);
     const created = (
-      await app.inject({ method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) })
+      await app.inject({ headers: ADMIN, method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) })
     ).json().model;
 
-    const getRes = await app.inject({ method: "GET", url: `/v1/models/${created.id}` });
+    const getRes = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/models/${created.id}` });
     assert.equal(getRes.statusCode, 200);
     assert.equal(getRes.json().model.id, created.id);
 
-    const missingRes = await app.inject({ method: "GET", url: `/v1/models/${MISSING_ID}` });
+    const missingRes = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/models/${MISSING_ID}` });
     assert.equal(missingRes.statusCode, 404);
     const body = missingRes.json();
     assert.equal(body.error.code, "NOT_FOUND");
@@ -89,7 +90,7 @@ test("POST /v1/models rejects an invalid payload with a structured 400", async (
   await withMigratedApp(async (app, pool) => {
     await truncateAll(pool, "inhouse");
     const vendor = await createVendor(app);
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/models",
       payload: sampleModelPayload(vendor.id, { inhouseAlias: undefined }),
@@ -102,7 +103,7 @@ test("POST /v1/models rejects an invalid payload with a structured 400", async (
 test("POST /v1/models rejects a nonexistent vendor id with a clean error, not a 500", async () => {
   await withMigratedApp(async (app, pool) => {
     await truncateAll(pool, "inhouse");
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/models",
       payload: sampleModelPayload(MISSING_ID),
@@ -112,7 +113,7 @@ test("POST /v1/models rejects a nonexistent vendor id with a clean error, not a 
     assert.ok(!res.body.includes("relation"));
     assert.ok(!res.body.toLowerCase().includes("at "));
 
-    const list = await app.inject({ method: "GET", url: "/v1/models" });
+    const list = await app.inject({ headers: ADMIN, method: "GET", url: "/v1/models" });
     assert.equal(list.json().models.length, 0, "no orphan model should have been created");
   });
 });
@@ -121,10 +122,10 @@ test("POST /v1/models rejects a duplicate inhouse alias with 409 CONFLICT", asyn
   await withMigratedApp(async (app, pool) => {
     await truncateAll(pool, "inhouse");
     const vendor = await createVendor(app);
-    const first = await app.inject({ method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) });
+    const first = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) });
     assert.equal(first.statusCode, 201);
 
-    const duplicate = await app.inject({
+    const duplicate = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/models",
       payload: sampleModelPayload(vendor.id, { providerModelId: "different-provider-id" }),
@@ -140,21 +141,21 @@ test("POST /v1/models rejects a duplicate (vendor, providerModelId) pair with 40
     const vendorA = await createVendor(app, { slug: "vendor-a" });
     const vendorB = await createVendor(app, { slug: "vendor-b" });
 
-    const first = await app.inject({
+    const first = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/models",
       payload: sampleModelPayload(vendorA.id, { inhouseAlias: "alias-a" }),
     });
     assert.equal(first.statusCode, 201);
 
-    const duplicate = await app.inject({
+    const duplicate = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/models",
       payload: sampleModelPayload(vendorA.id, { inhouseAlias: "alias-a-2" }),
     });
     assert.equal(duplicate.statusCode, 409);
 
-    const otherVendor = await app.inject({
+    const otherVendor = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/models",
       payload: sampleModelPayload(vendorB.id, { inhouseAlias: "alias-b" }),
@@ -168,10 +169,10 @@ test("PATCH /v1/models/:id updates fields, rejects vendorId changes and empty pa
     await truncateAll(pool, "inhouse");
     const vendor = await createVendor(app);
     const created = (
-      await app.inject({ method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) })
+      await app.inject({ headers: ADMIN, method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) })
     ).json().model;
 
-    const patchRes = await app.inject({
+    const patchRes = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/models/${created.id}`,
       payload: { displayName: "Renamed Model", contextWindow: 200000 },
@@ -180,14 +181,14 @@ test("PATCH /v1/models/:id updates fields, rejects vendorId changes and empty pa
     assert.equal(patchRes.json().model.displayName, "Renamed Model");
     assert.equal(patchRes.json().model.contextWindow, 200000);
 
-    const vendorChangeAttempt = await app.inject({
+    const vendorChangeAttempt = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/models/${created.id}`,
       payload: { vendorId: MISSING_ID },
     });
     assert.equal(vendorChangeAttempt.statusCode, 400);
 
-    const emptyPatch = await app.inject({ method: "PATCH", url: `/v1/models/${created.id}`, payload: {} });
+    const emptyPatch = await app.inject({ headers: ADMIN, method: "PATCH", url: `/v1/models/${created.id}`, payload: {} });
     assert.equal(emptyPatch.statusCode, 400);
   });
 });
@@ -197,10 +198,10 @@ test("DELETE /v1/models/:id soft-disables the model rather than deleting the row
     await truncateAll(pool, "inhouse");
     const vendor = await createVendor(app);
     const created = (
-      await app.inject({ method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) })
+      await app.inject({ headers: ADMIN, method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) })
     ).json().model;
 
-    const deleteRes = await app.inject({ method: "DELETE", url: `/v1/models/${created.id}` });
+    const deleteRes = await app.inject({ headers: ADMIN, method: "DELETE", url: `/v1/models/${created.id}` });
     assert.equal(deleteRes.statusCode, 200);
     assert.equal(deleteRes.json().model.status, "disabled");
 
@@ -209,7 +210,7 @@ test("DELETE /v1/models/:id soft-disables the model rather than deleting the row
     assert.equal(stillThere.rows[0].status, "disabled");
 
     // Disabled model retrieval remains available (it's a lifecycle state, not a deletion).
-    const getRes = await app.inject({ method: "GET", url: `/v1/models/${created.id}` });
+    const getRes = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/models/${created.id}` });
     assert.equal(getRes.statusCode, 200);
     assert.equal(getRes.json().model.status, "disabled");
   });
@@ -222,28 +223,28 @@ test("GET /v1/models supports filtering by vendor, status, and search", async ()
     const vendorB = await createVendor(app, { slug: "vendor-b" });
 
     const modelA = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: "/v1/models",
         payload: sampleModelPayload(vendorA.id, { inhouseAlias: "alpha-model", displayName: "Alpha Model" }),
       })
     ).json().model;
-    await app.inject({
+    await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/models",
       payload: sampleModelPayload(vendorB.id, { inhouseAlias: "beta-model", displayName: "Beta Model" }),
     });
-    await app.inject({ method: "DELETE", url: `/v1/models/${modelA.id}` });
+    await app.inject({ headers: ADMIN, method: "DELETE", url: `/v1/models/${modelA.id}` });
 
-    const byVendor = await app.inject({ method: "GET", url: `/v1/models?vendorId=${vendorA.id}` });
+    const byVendor = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/models?vendorId=${vendorA.id}` });
     assert.equal(byVendor.json().models.length, 1);
     assert.equal(byVendor.json().models[0].vendorId, vendorA.id);
 
-    const byStatus = await app.inject({ method: "GET", url: "/v1/models?status=disabled" });
+    const byStatus = await app.inject({ headers: ADMIN, method: "GET", url: "/v1/models?status=disabled" });
     assert.equal(byStatus.json().models.length, 1);
     assert.equal(byStatus.json().models[0].inhouseAlias, "alpha-model");
 
-    const bySearch = await app.inject({ method: "GET", url: "/v1/models?search=beta" });
+    const bySearch = await app.inject({ headers: ADMIN, method: "GET", url: "/v1/models?search=beta" });
     assert.equal(bySearch.json().models.length, 1);
     assert.equal(bySearch.json().models[0].inhouseAlias, "beta-model");
   });
@@ -254,7 +255,7 @@ test("GET /v1/models supports pagination via limit/offset", async () => {
     await truncateAll(pool, "inhouse");
     const vendor = await createVendor(app);
     for (let i = 0; i < 5; i += 1) {
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: "/v1/models",
         payload: sampleModelPayload(vendor.id, {
@@ -264,13 +265,13 @@ test("GET /v1/models supports pagination via limit/offset", async () => {
       });
     }
 
-    const page1 = await app.inject({ method: "GET", url: "/v1/models?limit=2&offset=0" });
+    const page1 = await app.inject({ headers: ADMIN, method: "GET", url: "/v1/models?limit=2&offset=0" });
     assert.equal(page1.json().models.length, 2);
-    const page2 = await app.inject({ method: "GET", url: "/v1/models?limit=2&offset=2" });
+    const page2 = await app.inject({ headers: ADMIN, method: "GET", url: "/v1/models?limit=2&offset=2" });
     assert.equal(page2.json().models.length, 2);
     assert.notDeepEqual(page1.json().models, page2.json().models);
 
-    const invalidLimit = await app.inject({ method: "GET", url: "/v1/models?limit=0" });
+    const invalidLimit = await app.inject({ headers: ADMIN, method: "GET", url: "/v1/models?limit=0" });
     assert.equal(invalidLimit.statusCode, 400);
   });
 });
@@ -291,7 +292,7 @@ test("GET /v1/models filters by capability and workload", async () => {
 
     const vendor = await createVendor(app);
     const modelWithStreaming = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: "/v1/models",
         payload: sampleModelPayload(vendor.id, {
@@ -301,7 +302,7 @@ test("GET /v1/models filters by capability and workload", async () => {
         }),
       })
     ).json().model;
-    await app.inject({
+    await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/models",
       payload: sampleModelPayload(vendor.id, {
@@ -311,11 +312,11 @@ test("GET /v1/models filters by capability and workload", async () => {
       }),
     });
 
-    const byCapability = await app.inject({ method: "GET", url: `/v1/models?capabilityId=${streaming.id}` });
+    const byCapability = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/models?capabilityId=${streaming.id}` });
     assert.equal(byCapability.json().models.length, 1);
     assert.equal(byCapability.json().models[0].id, modelWithStreaming.id);
 
-    const byWorkload = await app.inject({ method: "GET", url: `/v1/models?workloadId=${coding.id}` });
+    const byWorkload = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/models?workloadId=${coding.id}` });
     assert.equal(byWorkload.json().models.length, 1);
     assert.equal(byWorkload.json().models[0].id, modelWithStreaming.id);
   });
@@ -337,7 +338,7 @@ test("model capability and workload assignment persists and is replaceable", asy
 
     const vendor = await createVendor(app);
     const model = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: "/v1/models",
         payload: sampleModelPayload(vendor.id, { capabilityIds: [streaming.id], workloadIds: [coding.id] }),
@@ -346,7 +347,7 @@ test("model capability and workload assignment persists and is replaceable", asy
     assert.equal(model.capabilities.length, 1);
     assert.equal(model.capabilities[0].slug, "streaming");
 
-    const replaceRes = await app.inject({
+    const replaceRes = await app.inject({ headers: ADMIN,
       method: "PUT",
       url: `/v1/models/${model.id}/capabilities`,
       payload: { capabilityIds: [vision.id] },
@@ -355,7 +356,7 @@ test("model capability and workload assignment persists and is replaceable", asy
     assert.equal(replaceRes.json().capabilities.length, 1);
     assert.equal(replaceRes.json().capabilities[0].slug, "vision");
 
-    const removeRes = await app.inject({
+    const removeRes = await app.inject({ headers: ADMIN,
       method: "PUT",
       url: `/v1/models/${model.id}/workloads`,
       payload: { workloadIds: [] },
@@ -372,10 +373,10 @@ test("assigning a duplicate capability id in one call is deduplicated, not an er
     const streaming = await capabilities.create({ slug: "streaming", display_name: "Streaming", description: null });
     const vendor = await createVendor(app);
     const model = (
-      await app.inject({ method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) })
+      await app.inject({ headers: ADMIN, method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) })
     ).json().model;
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "PUT",
       url: `/v1/models/${model.id}/capabilities`,
       payload: { capabilityIds: [streaming.id, streaming.id] },
@@ -391,7 +392,7 @@ test("assigning capabilities to a nonexistent model returns 404, not a 500", asy
     const capabilities = new CapabilitiesRepository(pool);
     const streaming = await capabilities.create({ slug: "streaming", display_name: "Streaming", description: null });
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "PUT",
       url: `/v1/models/${MISSING_ID}/capabilities`,
       payload: { capabilityIds: [streaming.id] },
@@ -407,14 +408,14 @@ test("assigning a nonexistent capability id to a model returns a clean structure
     const streaming = await capabilities.create({ slug: "streaming", display_name: "Streaming", description: null });
     const vendor = await createVendor(app);
     const model = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: "/v1/models",
         payload: sampleModelPayload(vendor.id, { capabilityIds: [streaming.id] }),
       })
     ).json().model;
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "PUT",
       url: `/v1/models/${model.id}/capabilities`,
       payload: { capabilityIds: [MISSING_ID] },
@@ -423,7 +424,7 @@ test("assigning a nonexistent capability id to a model returns a clean structure
     assert.ok(!res.body.includes("relation"));
     assert.ok(!res.body.includes("constraint"));
 
-    const unchanged = await app.inject({ method: "GET", url: `/v1/models/${model.id}` });
+    const unchanged = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/models/${model.id}` });
     assert.equal(unchanged.json().model.capabilities.length, 1);
     assert.equal(unchanged.json().model.capabilities[0].slug, "streaming");
   });
@@ -437,21 +438,21 @@ test("a mixed valid+nonexistent capability id list for a model fails atomically"
     const vision = await capabilities.create({ slug: "vision", display_name: "Vision", description: null });
     const vendor = await createVendor(app);
     const model = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: "/v1/models",
         payload: sampleModelPayload(vendor.id, { capabilityIds: [streaming.id] }),
       })
     ).json().model;
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "PUT",
       url: `/v1/models/${model.id}/capabilities`,
       payload: { capabilityIds: [vision.id, MISSING_ID] },
     });
     assert.ok(res.statusCode === 400 || res.statusCode === 404);
 
-    const unchanged = await app.inject({ method: "GET", url: `/v1/models/${model.id}` });
+    const unchanged = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/models/${model.id}` });
     const slugs = unchanged.json().model.capabilities.map((c: { slug: string }) => c.slug);
     assert.deepEqual(slugs, ["streaming"]);
   });
@@ -475,21 +476,21 @@ test("a mixed valid+nonexistent workload id list for a model fails atomically", 
     });
     const vendor = await createVendor(app);
     const model = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: "/v1/models",
         payload: sampleModelPayload(vendor.id, { workloadIds: [coding.id] }),
       })
     ).json().model;
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "PUT",
       url: `/v1/models/${model.id}/workloads`,
       payload: { workloadIds: [research.id, MISSING_ID] },
     });
     assert.ok(res.statusCode === 400 || res.statusCode === 404);
 
-    const unchanged = await app.inject({ method: "GET", url: `/v1/models/${model.id}` });
+    const unchanged = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/models/${model.id}` });
     const slugs = unchanged.json().model.workloads.map((w: { slug: string }) => w.slug);
     assert.deepEqual(slugs, ["coding_agent"]);
   });
@@ -500,14 +501,14 @@ test("creating a model with a nonexistent capability id in the inline list fails
     await truncateAll(pool, "inhouse");
     const vendor = await createVendor(app);
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "POST",
       url: "/v1/models",
       payload: sampleModelPayload(vendor.id, { capabilityIds: [MISSING_ID] }),
     });
     assert.ok(res.statusCode === 400 || res.statusCode === 404);
 
-    const list = await app.inject({ method: "GET", url: "/v1/models" });
+    const list = await app.inject({ headers: ADMIN, method: "GET", url: "/v1/models" });
     assert.equal(list.json().models.length, 0, "no model should have been created");
   });
 });
@@ -516,9 +517,9 @@ test("a SQL-injection-shaped search value is treated as inert data via parameter
   await withMigratedApp(async (app, pool) => {
     await truncateAll(pool, "inhouse");
     const vendor = await createVendor(app);
-    await app.inject({ method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) });
+    await app.inject({ headers: ADMIN, method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) });
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "GET",
       url: `/v1/models?search=${encodeURIComponent("'; DROP TABLE models; --")}`,
     });
@@ -535,10 +536,10 @@ test("audit events are recorded for model lifecycle and assignment actions", asy
     await truncateAll(pool, "inhouse");
     const vendor = await createVendor(app);
     const model = (
-      await app.inject({ method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) })
+      await app.inject({ headers: ADMIN, method: "POST", url: "/v1/models", payload: sampleModelPayload(vendor.id) })
     ).json().model;
-    await app.inject({ method: "PATCH", url: `/v1/models/${model.id}`, payload: { displayName: "Renamed" } });
-    await app.inject({ method: "DELETE", url: `/v1/models/${model.id}` });
+    await app.inject({ headers: ADMIN, method: "PATCH", url: `/v1/models/${model.id}`, payload: { displayName: "Renamed" } });
+    await app.inject({ headers: ADMIN, method: "DELETE", url: `/v1/models/${model.id}` });
 
     const events = await pool.query<{ action: string }>(
       "SELECT action FROM audit_events WHERE resource_type = 'model' AND resource_id = $1 ORDER BY created_at",

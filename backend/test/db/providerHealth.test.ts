@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ADMIN } from "./helpers.js";
 import { test } from "node:test";
 import { withMigratedApp, truncateAll } from "./helpers.js";
 import { ProviderHealthService } from "../../src/services/providerHealthService.js";
@@ -14,9 +15,9 @@ const sampleVendorPayload = {
 };
 
 async function createVendorWithAccount(app: import("fastify").FastifyInstance, accountOverrides: Record<string, unknown> = {}) {
-  const vendor = (await app.inject({ method: "POST", url: "/v1/vendors", payload: sampleVendorPayload })).json().vendor;
+  const vendor = (await app.inject({ headers: ADMIN, method: "POST", url: "/v1/vendors", payload: sampleVendorPayload })).json().vendor;
   const account = (
-    await app.inject({
+    await app.inject({ headers: ADMIN,
       method: "POST",
       url: `/v1/vendors/${vendor.id}/accounts`,
       payload: { slug: "primary", displayName: "Primary Account", ...accountOverrides },
@@ -32,19 +33,19 @@ test("malformed (non-UUID) vendor or account ids are rejected with 400, not a 50
     await truncateAll(pool, "inhouse");
     const { vendor, account } = await createVendorWithAccount(app);
 
-    const badVendor = await app.inject({
+    const badVendor = await app.inject({ headers: ADMIN,
       method: "GET",
       url: `/v1/vendors/not-a-uuid/accounts/${account.id}/health`,
     });
     assert.equal(badVendor.statusCode, 400);
 
-    const badAccount = await app.inject({
+    const badAccount = await app.inject({ headers: ADMIN,
       method: "GET",
       url: `/v1/vendors/${vendor.id}/accounts/not-a-uuid/health`,
     });
     assert.equal(badAccount.statusCode, 400);
 
-    const badEvents = await app.inject({
+    const badEvents = await app.inject({ headers: ADMIN,
       method: "GET",
       url: `/v1/vendors/${vendor.id}/accounts/not-a-uuid/health/events`,
     });
@@ -57,7 +58,7 @@ test("GET health returns 'unknown' before any observation has been recorded", as
     await truncateAll(pool, "inhouse");
     const { vendor, account } = await createVendorWithAccount(app);
 
-    const res = await app.inject({ method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health` });
+    const res = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health` });
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.json().health, {
       vendorAccountId: account.id,
@@ -71,7 +72,7 @@ test("GET health returns 'unknown' before any observation has been recorded", as
       lastSafeErrorCode: null,
     });
 
-    const eventsRes = await app.inject({ method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health/events` });
+    const eventsRes = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health/events` });
     assert.equal(eventsRes.statusCode, 200);
     assert.deepEqual(eventsRes.json().events, []);
   });
@@ -92,7 +93,7 @@ test("recording a healthy observation creates a snapshot and one history event, 
       checkedAt: new Date(),
     });
 
-    const healthRes = await app.inject({ method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health` });
+    const healthRes = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health` });
     const health = healthRes.json().health;
     assert.equal(health.status, "healthy");
     assert.equal(health.consecutiveFailures, 0);
@@ -115,7 +116,7 @@ test("recording a healthy observation creates a snapshot and one history event, 
       ].sort(),
     );
 
-    const eventsRes = await app.inject({ method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health/events` });
+    const eventsRes = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health/events` });
     const events = eventsRes.json().events;
     assert.equal(events.length, 1);
     assert.equal(events[0].status, "healthy");
@@ -294,7 +295,7 @@ test("history is returned most-recent-first and respects the limit query paramet
       });
     }
 
-    const res = await app.inject({
+    const res = await app.inject({ headers: ADMIN,
       method: "GET",
       url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health/events?limit=2`,
     });
@@ -332,7 +333,7 @@ test("an account belonging to a different vendor is not accessible via the wrong
     await truncateAll(pool, "inhouse");
     const { account } = await createVendorWithAccount(app);
     const otherVendor = (
-      await app.inject({
+      await app.inject({ headers: ADMIN,
         method: "POST",
         url: "/v1/vendors",
         payload: { ...sampleVendorPayload, slug: "other-vendor" },
@@ -353,7 +354,7 @@ test("an account belonging to a different vendor is not accessible via the wrong
       NotFoundError,
     );
 
-    const res = await app.inject({ method: "GET", url: `/v1/vendors/${otherVendor.id}/accounts/${account.id}/health` });
+    const res = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/vendors/${otherVendor.id}/accounts/${account.id}/health` });
     assert.equal(res.statusCode, 404);
   });
 });
@@ -373,7 +374,7 @@ test("health can be recorded and read for a disabled account — recording histo
       checkedAt: new Date(),
     });
 
-    const res = await app.inject({ method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health` });
+    const res = await app.inject({ headers: ADMIN, method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/health` });
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().health.status, "unhealthy");
   });
@@ -397,7 +398,7 @@ test("disabling and re-enabling an account never touches its recorded health his
     const beforeDisable = await service.getCurrentHealth(vendor.id, account.id);
     assert.equal(beforeDisable?.status, "healthy");
 
-    const disableRes = await app.inject({ method: "DELETE", url: `/v1/vendors/${vendor.id}/accounts/${account.id}` });
+    const disableRes = await app.inject({ headers: ADMIN, method: "DELETE", url: `/v1/vendors/${vendor.id}/accounts/${account.id}` });
     assert.equal(disableRes.statusCode, 200);
     assert.equal(disableRes.json().account.status, "disabled");
 
@@ -408,7 +409,7 @@ test("disabling and re-enabling an account never touches its recorded health his
     const historyWhileDisabled = await service.getHistory(vendor.id, account.id, 50);
     assert.equal(historyWhileDisabled.length, 1);
 
-    const reEnableRes = await app.inject({
+    const reEnableRes = await app.inject({ headers: ADMIN,
       method: "PATCH",
       url: `/v1/vendors/${vendor.id}/accounts/${account.id}`,
       payload: { status: "enabled" },

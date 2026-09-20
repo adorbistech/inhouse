@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config/index.js";
+import { requireAdmin } from "../plugins/adminAuth.js";
 import { WorkloadsRepository } from "../repositories/workloadsRepository.js";
 import { toWorkloadResponse } from "./serializers.js";
 
@@ -10,6 +11,7 @@ export function registerWorkloadRoutes(app: FastifyInstance, pool: Pool, config:
 
   app.register(
     async (versioned) => {
+      requireAdmin(versioned, config);
       versioned.get("/workloads", async () => {
         const workloads = await repository.list();
         return { workloads: workloads.map(toWorkloadResponse) };
