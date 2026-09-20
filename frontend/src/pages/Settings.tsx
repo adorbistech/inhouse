@@ -4,13 +4,26 @@ import { Button } from "../components/ui/Button";
 import { Chip } from "../components/ui/Chip";
 import { Panel, PanelHeader } from "../components/ui/Panel";
 import { Table } from "../components/ui/Table";
-import { Toggle } from "../components/ui/Toggle";
 import { Drawer } from "../components/ui/Drawer";
 import { FormField, Select, TextInput } from "../components/ui/FormField";
-import { vendors, routingPolicy, inhouseApiKeys, auditLog } from "../data/mockData";
-import { formatRelative, formatTimeUtc, titleCase } from "../lib/format";
+import { StatusPill } from "../components/ui/StatusPill";
+import { Toggle } from "../components/ui/Toggle";
+import { formatDateTime, titleCase } from "../lib/format";
 import { api, ApiError } from "../lib/api";
-import type { CapabilityApi, CreateModelPayload, ModelApi, VendorApi, WorkloadApi } from "../types/api";
+import type { HealthState } from "../types/domain";
+import type { CapabilityApi, CreateModelPayload, ModelApi, SystemHealthApi, VendorApi, VendorStatus, WorkloadApi } from "../types/api";
+
+function vendorStatusToHealthState(status: VendorStatus): HealthState {
+  if (status === "enabled") return "healthy";
+  if (status === "unavailable") return "unreachable";
+  return "disabled";
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return "An unexpected error occurred.";
+}
 
 const SETTINGS_TABS = [
   { key: "api", label: "API" },
@@ -78,34 +91,19 @@ function ApiTab() {
       </Panel>
 
       <Panel className="mb-space-lg">
-        <PanelHeader title="Inhouse Access Tokens" eyebrow="3 ACTIVE" />
+        <PanelHeader title="Inhouse Access Tokens" eyebrow="NOT YET AVAILABLE" />
         <p className="px-space-md pt-space-sm font-body-sm text-body-sm text-on-surface-variant">
-          Client-facing credentials. Separate credential class from vendor credentials — never used to authenticate
-          against a provider directly.
+          Client-facing credentials. A separate credential class from vendor credentials — never used to
+          authenticate against a provider directly.
         </p>
-        <Table
-          rowKey={(k) => k.id}
-          rows={inhouseApiKeys}
-          columns={[
-            { header: "Identifier", render: (k) => <span className="text-on-surface font-bold">{k.label}</span> },
-            { header: "Token Prefix", render: (k) => <span className="text-on-surface-variant font-code-dense text-code-dense">{k.tokenPrefix}</span> },
-            { header: "Scopes", render: (k) => <span className="text-on-surface-variant">{k.scopes.join(", ")}</span> },
-            { header: "Last Used", render: (k) => <span className="text-outline">{formatRelative(k.lastUsedAt)}</span> },
-            {
-              header: "State",
-              render: (k) => (
-                <Chip tone={k.state === "active" ? "tertiary" : k.state === "rotating" ? "secondary" : "error"}>
-                  {k.state}
-                </Chip>
-              ),
-            },
-          ]}
-        />
         <div className="p-space-md">
-          <Button variant="primary">
-            <Icon name="add" size={16} />
-            Generate Inhouse API Key
-          </Button>
+          <div className="bg-surface p-space-sm flex items-start gap-space-xs">
+            <Icon name="info" className="text-secondary shrink-0" size={18} />
+            <p className="font-body-sm text-body-sm text-on-surface-variant">
+              Inhouse gateway API key issuance and management is implemented in a later block. No keys are
+              configured or displayed here yet.
+            </p>
+          </div>
         </div>
       </Panel>
     </div>
@@ -128,155 +126,117 @@ function EndpointRow({ label, path, header }: { label: string; path: string; hea
   );
 }
 
+/**
+ * Every row here comes straight from `api.listVendors()` (Block 06) — the
+ * per-vendor priority/fallback/retry fields it already persists. There is
+ * no fabricated multi-tier "ladder": routing EXECUTION (which vendor
+ * actually serves a given request) is implemented in a later block, so
+ * this tab only ever displays and edits configuration, ordered by the
+ * priority operators have set on the Vendors page.
+ */
 function RoutingTab() {
-  const [workload, setWorkload] = useState(routingPolicy.workload);
-  const [rules, setRules] = useState({
-    fallbackOnTimeout: true,
-    fallbackOnRateLimit: true,
-    fallbackOnProviderError: true,
-    fallbackOnQuotaExhaustion: false,
-    fallbackOnAuthFailure: true,
-  });
+  const [vendors, setVendors] = useState<VendorApi[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
 
-  const vendorById = (id: string) => vendors.find((v) => v.id === id);
+  const refresh = useCallback(async () => {
+    try {
+      const { vendors: rows } = await api.listVendors();
+      setVendors(rows);
+      setListError(null);
+    } catch (error) {
+      setListError(errorMessage(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const ordered = useMemo(() => [...(vendors ?? [])].sort((a, b) => b.priority - a.priority), [vendors]);
+
+  if (listError) {
+    return (
+      <div className="bg-surface-container-low p-space-lg flex flex-col items-center gap-space-sm text-center mb-space-lg">
+        <Icon name="error" className="text-error" size={28} />
+        <span className="font-headline-md text-headline-md font-bold text-on-surface">Failed to load routing configuration</span>
+        <p className="font-body-sm text-body-sm text-on-surface-variant max-w-md">{listError}</p>
+        <Button variant="secondary" onClick={() => refresh()}>
+          <Icon name="refresh" size={16} />
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (vendors === null) {
+    return (
+      <div className="bg-surface-container-low p-space-lg flex flex-col items-center gap-space-sm text-center mb-space-lg">
+        <Icon name="hourglass_top" className="text-primary animate-pulse" size={28} />
+        <span className="font-body-md text-body-md text-on-surface-variant">Loading routing configuration…</span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-space-md mb-space-lg">
       <Panel>
-        <PanelHeader
-          title="Multi-Tier Routing Policy"
-          eyebrow="ORCHESTRATOR-LS"
-          right={
-            <Select value={workload} onChange={(e) => setWorkload(e.target.value as typeof workload)} className="py-1">
-              <option value="coding_agent">Workload: CODING_AGENT</option>
-              <option value="application_api">Workload: APPLICATION_API</option>
-              <option value="automation">Workload: AUTOMATION</option>
-              <option value="research">Workload: RESEARCH</option>
-              <option value="internal">Workload: INTERNAL</option>
-            </Select>
-          }
-        />
+        <PanelHeader title="Priority-Ordered Provider Configuration" eyebrow={`${ordered.length} CONFIGURED`} />
         <div className="p-space-md flex flex-col gap-space-sm">
-          <div className="flex items-center justify-between font-code-dense text-code-dense text-on-surface-variant uppercase">
-            <span>Active Chain Visualizer</span>
-            <Chip tone="tertiary">Ladder Stable</Chip>
+          <div className="bg-surface-container-high p-space-sm flex items-start gap-space-xs">
+            <Icon name="info" className="text-secondary shrink-0" size={18} />
+            <p className="font-body-sm text-body-sm text-on-surface-variant">
+              Routing execution (which vendor actually serves a request) is implemented in a later block. This tab
+              displays the per-vendor priority and fallback configuration Block 06 persists, ordered highest
+              priority first — edit a vendor's settings on the Vendors page.
+            </p>
           </div>
-          <div className="flex flex-col sm:flex-row items-stretch gap-space-xs">
-            {routingPolicy.ladder.map((rung, i) => {
-              const vendor = vendorById(rung.vendorId);
-              const isPrimary = i === 0;
-              return (
-                <div
-                  key={rung.rank}
-                  className={`flex-1 bg-surface p-space-sm border-l-2 ${
-                    isPrimary ? "border-l-primary" : "border-l-secondary"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-label-md text-label-md uppercase text-on-surface-variant">
-                      Tier {rung.rank} {isPrimary ? "Primary" : rung.rank === 2 ? "Secondary" : "Standby"}
-                    </span>
-                    <Chip tone={isPrimary ? "primary" : "secondary"}>Bias {rung.priorityBias}/10</Chip>
-                  </div>
-                  <div className="font-body-md text-body-md text-on-surface font-bold mt-1">{vendor?.name}</div>
-                  <div className="font-code-dense text-code-dense text-on-surface-variant truncate">
-                    {vendor?.models.find((m) => m.id === rung.modelId)?.displayName ?? rung.modelId}
-                  </div>
-                  <div className="font-code-dense text-code-dense text-outline mt-1">{rung.triggerCondition}</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </Panel>
-
-      <Panel>
-        <PanelHeader title="Execution Sequence Ladder" right={<Button variant="secondary" className="px-space-sm py-1"><Icon name="add" size={14} />Add Tier</Button>} />
-        <div className="p-space-md flex flex-col gap-space-sm">
-          {routingPolicy.ladder.map((rung) => {
-            const vendor = vendorById(rung.vendorId);
-            return (
-              <div key={rung.rank} className="bg-surface p-space-sm flex flex-col gap-space-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-label-md text-label-md text-primary uppercase">
-                    Tier {rung.rank} — {rung.rank === 1 ? "Primary Target" : rung.rank === 2 ? "Secondary Standby" : "Emergency Standby"}
-                  </span>
-                  <span className="font-code-dense text-code-dense text-on-surface-variant">Priority: {rung.priorityBias} / 10</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-sm">
-                  <FormField label="Provider">
-                    <Select defaultValue={rung.vendorId}>
-                      {vendors.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </FormField>
-                  <FormField label="Model Repository">
-                    <Select defaultValue={rung.modelId}>
-                      {vendor?.models.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.modelId}
-                        </option>
-                      ))}
-                    </Select>
-                  </FormField>
-                </div>
-                <input type="range" min={0} max={10} defaultValue={rung.priorityBias} className="w-full accent-primary" />
-                <span className="font-code-dense text-code-dense text-outline">{rung.triggerCondition}</span>
-              </div>
-            );
-          })}
-        </div>
-      </Panel>
-
-      <Panel className="mb-space-lg">
-        <PanelHeader title="Determ. Failover Rules & Safe Masked Diagnostics" />
-        <div className="p-space-md flex flex-col gap-space-sm">
-          {[
-            { key: "fallbackOnTimeout", label: "Fallback on Timeout" },
-            { key: "fallbackOnRateLimit", label: "Fallback on Rate Limit" },
-            { key: "fallbackOnProviderError", label: "Fallback on Provider 5xx" },
-            { key: "fallbackOnQuotaExhaustion", label: "Fallback on Quota Exhaustion" },
-            { key: "fallbackOnAuthFailure", label: "Fallback on Auth Failure" },
-          ].map((rule) => (
-            <div key={rule.key} className="flex items-center justify-between bg-surface p-space-sm">
-              <span className="font-code-dense text-code-dense text-on-surface uppercase">{rule.label}</span>
-              <Toggle
-                checked={rules[rule.key as keyof typeof rules]}
-                onChange={(checked) => setRules((r) => ({ ...r, [rule.key]: checked }))}
-              />
+          {ordered.length === 0 ? (
+            <div className="bg-surface p-space-sm text-center font-body-sm text-body-sm text-on-surface-variant">
+              No vendors configured yet.
             </div>
-          ))}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-sm pt-space-xs">
-            <FormField label="Max Provider Attempts">
-              <Select defaultValue="3">
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-                <option value="5">5</option>
-              </Select>
-            </FormField>
-            <FormField label="Max Total Execution Time">
-              <Select defaultValue="12000">
-                <option value="5000">5.0s</option>
-                <option value="8000">8.0s</option>
-                <option value="12000">12.0s</option>
-                <option value="20000">20.0s</option>
-              </Select>
-            </FormField>
-          </div>
+          ) : (
+            ordered.map((v) => (
+              <div key={v.id} className="bg-surface p-space-sm flex flex-col gap-space-xs">
+                <div className="flex items-center justify-between flex-wrap gap-space-xs">
+                  <div className="flex items-center gap-space-xs">
+                    <span className="font-body-md text-body-md text-on-surface font-bold">{v.displayName}</span>
+                    <StatusPill state={vendorStatusToHealthState(v.status)} detail={titleCase(v.status)} />
+                  </div>
+                  <div className="flex items-center gap-space-xs">
+                    <Chip>{titleCase(v.protocol)}</Chip>
+                    <Chip tone="primary">Priority {v.priority} / 10</Chip>
+                    {v.automaticFallback && <Chip tone="tertiary">Auto-Fallback</Chip>}
+                  </div>
+                </div>
+                <div className="font-code-dense text-code-dense text-on-surface-variant flex flex-wrap gap-space-sm">
+                  <span>Timeout: {v.timeoutMs ?? "—"}ms</span>
+                  <span>Retry attempts: {v.retryMaxAttempts ?? "—"}</span>
+                  <span>Retry backoff: {v.retryBackoffMs ?? "—"}ms</span>
+                </div>
+                <div className="font-code-dense text-code-dense text-outline flex flex-wrap gap-space-sm">
+                  {(
+                    [
+                      ["Timeout", v.retryOnTimeout],
+                      ["Rate Limit", v.retryOnRateLimit],
+                      ["5xx", v.retryOn5xx],
+                      ["Auth Failure", v.retryOnAuthFailure],
+                      ["Invalid Response", v.retryOnInvalidResponse],
+                    ] as [string, boolean][]
+                  )
+                    .filter(([, enabled]) => enabled)
+                    .map(([label]) => (
+                      <span key={label} className="text-tertiary">
+                        Retry on {label}
+                      </span>
+                    ))}
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </Panel>
     </div>
   );
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  if (error instanceof Error) return error.message;
-  return "An unexpected error occurred.";
 }
 
 function ModelsTab() {
@@ -702,106 +662,124 @@ function AddModelDrawer({
 }
 
 function AccountingTab() {
-  const totalBudget = 47.5;
-  const spent = 18.42;
-  const pct = (spent / totalBudget) * 100;
+  const [vendors, setVendors] = useState<VendorApi[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const { vendors: rows } = await api.listVendors();
+      setVendors(rows);
+      setListError(null);
+    } catch (error) {
+      setListError(errorMessage(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
   return (
     <div className="flex flex-col gap-space-md mb-space-lg">
       <Panel>
-        <PanelHeader title="Beta Cost & Allocation" eyebrow="LEDGER-BETA" />
+        <PanelHeader title="Cost & Usage Accounting" eyebrow="NOT YET AVAILABLE" />
         <div className="p-space-md flex flex-col gap-space-sm">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-space-sm">
-            <div className="bg-surface p-space-sm">
-              <span className="font-code-dense text-code-dense text-outline uppercase">Total Beta Cost (MTD)</span>
-              <div className="font-headline-lg text-headline-lg text-on-surface font-bold">${spent.toFixed(2)}</div>
-            </div>
-            <div className="bg-surface p-space-sm">
-              <span className="font-code-dense text-code-dense text-outline uppercase">Avg Cost / Request</span>
-              <div className="font-headline-lg text-headline-lg text-on-surface font-bold">$0.0047</div>
-            </div>
-            <div className="bg-surface p-space-sm">
-              <span className="font-code-dense text-code-dense text-outline uppercase">Cost / Task Unit</span>
-              <div className="font-headline-lg text-headline-lg text-on-surface font-bold">$0.038</div>
-            </div>
-          </div>
-          <div className="bg-surface p-space-sm flex flex-col gap-1">
-            <div className="flex items-center justify-between font-code-dense text-code-dense text-on-surface-variant uppercase">
-              <span>Allocation vs. Budget</span>
-              <span>{pct.toFixed(1)}%</span>
-            </div>
-            <div className="h-2 bg-surface-container-highest w-full">
-              <div className="h-2 bg-primary" style={{ width: `${pct}%` }} />
-            </div>
+          <div className="bg-surface p-space-sm flex items-start gap-space-xs">
+            <Icon name="info" className="text-secondary shrink-0" size={18} />
+            <p className="font-body-sm text-body-sm text-on-surface-variant">
+              Request execution and the usage ledger are implemented in a later block, so no cost or usage figures
+              are tracked yet. This panel intentionally does not display simulated dollar amounts.
+            </p>
           </div>
         </div>
       </Panel>
 
       <Panel className="mb-space-lg">
-        <PanelHeader title="Cost Partition Breakdown" />
-        <Table
-          rowKey={(v) => v.id}
-          rows={vendors}
-          columns={[
-            { header: "Provider", render: (v) => <span className="text-on-surface font-bold">{v.name}</span> },
-            { header: "Plan", render: (v) => <span className="text-on-surface-variant">{titleCase(v.planType)}</span> },
-            {
-              header: "Cost Model",
-              render: (v) => (
-                <span className="text-on-surface-variant">
-                  {v.planType === "payg" ? "Pay-As-You-Go" : v.planType === "coding_plan" ? "Fixed Subscription" : "N/A"}
-                </span>
-              ),
-            },
-          ]}
-        />
+        <PanelHeader title="Configured Billing Types" eyebrow={vendors ? `${vendors.length} VENDORS` : undefined} />
+        {listError && (
+          <div className="p-space-md flex flex-col items-center gap-space-sm text-center">
+            <span className="font-body-sm text-body-sm text-error">{listError}</span>
+            <Button variant="secondary" onClick={() => refresh()}>
+              Retry
+            </Button>
+          </div>
+        )}
+        {!listError && vendors === null && (
+          <div className="p-space-md text-center font-body-sm text-body-sm text-on-surface-variant">Loading…</div>
+        )}
+        {!listError && vendors !== null && vendors.length === 0 && (
+          <div className="p-space-md text-center font-body-sm text-body-sm text-on-surface-variant">
+            No vendors configured yet.
+          </div>
+        )}
+        {!listError && vendors !== null && vendors.length > 0 && (
+          <Table
+            rowKey={(v) => v.id}
+            rows={vendors}
+            columns={[
+              { header: "Provider", render: (v) => <span className="text-on-surface font-bold">{v.displayName}</span> },
+              { header: "Billing Type", render: (v) => <span className="text-on-surface-variant">{titleCase(v.billingType)}</span> },
+            ]}
+          />
+        )}
       </Panel>
     </div>
   );
 }
 
+/** Every row here comes from the real `GET /v1/health` liveness check — never fabricated. */
 function SystemTab() {
+  const [health, setHealth] = useState<SystemHealthApi | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await api.getSystemHealth();
+      setHealth(result);
+      setHealthError(null);
+    } catch (error) {
+      setHealthError(errorMessage(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
   return (
     <div className="flex flex-col gap-space-md mb-space-lg">
       <Panel>
-        <PanelHeader title="System Status & Security Audit" eyebrow="SYS-ABSTRACT" />
-        <div className="p-space-md grid grid-cols-1 sm:grid-cols-2 gap-space-sm">
-          <StatusRow label="Environment" value="INHOUSE" ok />
-          <StatusRow label="Database" value="Connected" ok />
-          <StatusRow label="API Gateway" value="Healthy" ok />
-          <StatusRow label="Redis Pool" value="Connected" ok />
-          <StatusRow label="Deployment" value="Docker VM8" ok />
-          <StatusRow label="Uptime" value="99.98% (30d)" ok />
-        </div>
-        <div className="px-space-md pb-space-md flex flex-col gap-space-xs">
-          <span className="font-code-dense text-code-dense text-outline uppercase">Security Policy Enforcement</span>
-          <PolicyRow label="API Authentication" value="Enabled" />
-          <PolicyRow label="Admin Authentication" value="SSO + RBAC" />
-          <PolicyRow label="Credential Encryption" value="AES-256" />
-          <PolicyRow label="Audit Logging" value="Enabled" />
-          <PolicyRow label="Secret Exposure Prevention" value="Active" />
-        </div>
+        <PanelHeader title="System Status" eyebrow="LIVE FROM /v1/health" />
+        {healthError && (
+          <div className="p-space-md flex flex-col items-center gap-space-sm text-center">
+            <span className="font-body-sm text-body-sm text-error">{healthError}</span>
+            <Button variant="secondary" onClick={() => refresh()}>
+              Retry
+            </Button>
+          </div>
+        )}
+        {!healthError && health === null && (
+          <div className="p-space-md text-center font-body-sm text-body-sm text-on-surface-variant">Checking…</div>
+        )}
+        {!healthError && health !== null && (
+          <div className="p-space-md grid grid-cols-1 sm:grid-cols-2 gap-space-sm">
+            <StatusRow label="Status" value={health.status === "ok" ? "OK" : health.status} ok={health.status === "ok"} />
+            <StatusRow label="Environment" value={health.environment} ok />
+            <StatusRow label="Service" value={health.service} ok />
+            <StatusRow label="Platform" value={health.platform} ok />
+            <StatusRow label="Last Checked" value={formatDateTime(health.timestamp)} ok />
+          </div>
+        )}
       </Panel>
 
       <Panel className="mb-space-lg">
-        <PanelHeader title="Live Audit Log Feed" eyebrow={`TAIL ${auditLog.length}/500`} />
-        <div className="p-space-md flex flex-col gap-1 font-code-dense text-code-dense max-h-80 overflow-y-auto">
-          {auditLog.map((entry) => (
-            <div key={entry.id} className="flex items-start gap-space-xs">
-              <span className="text-outline shrink-0">[{formatTimeUtc(entry.timestamp)}]</span>
-              <span className="text-primary shrink-0">{entry.actor}:</span>
-              <span
-                className={
-                  entry.status === "ok"
-                    ? "text-tertiary"
-                    : entry.status === "warning"
-                      ? "text-secondary"
-                      : "text-error"
-                }
-              >
-                {entry.action}
-              </span>
-            </div>
-          ))}
+        <PanelHeader title="Audit Log" eyebrow="NOT YET AVAILABLE" />
+        <div className="p-space-md flex items-start gap-space-xs">
+          <Icon name="info" className="text-secondary shrink-0" size={18} />
+          <p className="font-body-sm text-body-sm text-on-surface-variant">
+            Audit event capture and the audit log feed are implemented in a later block. No events are displayed
+            here yet.
+          </p>
         </div>
       </Panel>
     </div>
@@ -813,15 +791,6 @@ function StatusRow({ label, value, ok }: { label: string; value: string; ok?: bo
     <div className="bg-surface p-space-sm flex items-center justify-between">
       <span className="font-code-dense text-code-dense text-on-surface-variant uppercase">{label}</span>
       <span className={`font-body-md text-body-md font-bold ${ok ? "text-tertiary" : "text-error"}`}>{value}</span>
-    </div>
-  );
-}
-
-function PolicyRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between bg-surface-container-high px-space-sm py-1">
-      <span className="font-code-dense text-code-dense text-on-surface-variant uppercase">{label}</span>
-      <span className="font-code-dense text-code-dense text-tertiary uppercase">{value}</span>
     </div>
   );
 }

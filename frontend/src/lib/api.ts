@@ -7,6 +7,7 @@ import type {
   ModelListFilters,
   ProviderHealthApi,
   ProviderHealthEventApi,
+  SystemHealthApi,
   UpdateModelPayload,
   UpdateVendorPayload,
   VendorAccountApi,
@@ -198,4 +199,6 @@ export const api = {
     request<{ events: ProviderHealthEventApi[] }>(
       `/vendors/${vendorId}/accounts/${accountId}/health/events${limit ? `?limit=${limit}` : ""}`,
     ),
+
+  getSystemHealth: () => request<SystemHealthApi>("/health"),
 };

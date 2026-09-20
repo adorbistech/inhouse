@@ -1,9 +1,9 @@
 /**
  * Types matching the real Inhouse API (Block 06 — Vendor System, Block 07 —
- * Model Catalog). These are camelCase, matching the API's JSON contract
- * exactly — distinct from the Block 02 mock domain model in `./domain.ts`,
- * which the Dashboard and Settings "Routing"/"Accounting" tabs still use
- * for their still-mock sections.
+ * Model Catalog, Block 09 — Provider Health, Block 10 — Adapter
+ * Integration). These are camelCase, matching the API's JSON contract
+ * exactly. `./domain.ts` now holds only small, provider-agnostic UI state
+ * types with no backend equivalent of their own.
  */
 
 export type VendorStatus = "enabled" | "disabled" | "unavailable";
@@ -213,4 +213,13 @@ export interface ProviderHealthEventApi {
   source: "manual" | "adapter";
   checkedAt: string;
   createdAt: string;
+}
+
+/** The backend's own liveness surface (`GET /v1/health`) — never provider-specific. */
+export interface SystemHealthApi {
+  status: "ok";
+  service: string;
+  platform: "INHOUSE";
+  environment: string;
+  timestamp: string;
 }

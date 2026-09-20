@@ -2,7 +2,7 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Settings } from "./Settings";
-import type { CapabilityApi, ModelApi, ModelDetailApi, VendorApi, WorkloadApi } from "../types/api";
+import type { CapabilityApi, ModelApi, ModelDetailApi, SystemHealthApi, VendorApi, WorkloadApi } from "../types/api";
 
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
@@ -20,6 +20,7 @@ vi.mock("../lib/api", async (importOriginal) => {
       listVendors: vi.fn(),
       listCapabilities: vi.fn(),
       listWorkloads: vi.fn(),
+      getSystemHealth: vi.fn(),
     },
   };
 });
@@ -100,9 +101,25 @@ function sampleWorkload(overrides: Partial<WorkloadApi> = {}): WorkloadApi {
   };
 }
 
+function sampleHealth(overrides: Partial<SystemHealthApi> = {}): SystemHealthApi {
+  return {
+    status: "ok",
+    service: "inhouse-api",
+    platform: "INHOUSE",
+    environment: "beta",
+    timestamp: "2026-09-19T00:00:00Z",
+    ...overrides,
+  };
+}
+
 async function openModelsTab() {
   render(<Settings />);
   await userEvent.click(screen.getByRole("button", { name: /^models$/i }));
+}
+
+async function openTab(name: RegExp) {
+  render(<Settings />);
+  await userEvent.click(screen.getByRole("button", { name }));
 }
 
 beforeEach(() => {
@@ -111,6 +128,7 @@ beforeEach(() => {
   vi.mocked(api.listVendors).mockResolvedValue({ vendors: [] });
   vi.mocked(api.listCapabilities).mockResolvedValue({ capabilities: [] });
   vi.mocked(api.listWorkloads).mockResolvedValue({ workloads: [] });
+  vi.mocked(api.getSystemHealth).mockResolvedValue(sampleHealth());
 });
 
 describe("Settings — Models tab", () => {
@@ -278,5 +296,87 @@ describe("Settings — Models tab", () => {
     await userEvent.click(screen.getByRole("button", { name: /^disable$/i }));
 
     await waitFor(() => expect(api.disableModel).toHaveBeenCalledWith("mdl_1"));
+  });
+});
+
+describe("Settings — Routing tab (Block 10 audit fix)", () => {
+  test("shows an empty state when no vendors are configured — never fabricated ladder examples", async () => {
+    render(<Settings />);
+    expect(await screen.findByText(/no vendors configured yet/i)).toBeInTheDocument();
+  });
+
+  test("displays vendors returned by the API, ordered by priority, with no hardcoded provider inventory", async () => {
+    vi.mocked(api.listVendors).mockResolvedValue({
+      vendors: [
+        sampleVendor({ id: "vnd_low", displayName: "Low Priority Vendor", priority: 2 }),
+        sampleVendor({ id: "vnd_high", displayName: "High Priority Vendor", priority: 9 }),
+      ],
+    });
+
+    render(<Settings />);
+
+    const rows = await screen.findAllByText(/priority vendor/i);
+    expect(rows.map((el) => el.textContent)).toEqual(["High Priority Vendor", "Low Priority Vendor"]);
+
+    for (const banned of ["z.ai", "Cerebras", "Alibaba", "OpenCode"]) {
+      expect(screen.queryByText(new RegExp(banned, "i"))).not.toBeInTheDocument();
+    }
+  });
+
+  test("explains that routing execution is not yet implemented instead of simulating it", async () => {
+    vi.mocked(api.listVendors).mockResolvedValue({ vendors: [sampleVendor()] });
+    render(<Settings />);
+    expect(await screen.findByText(/routing execution.*is implemented in a later block/i)).toBeInTheDocument();
+  });
+});
+
+describe("Settings — API tab (Block 10 audit fix)", () => {
+  test("shows Inhouse access tokens as not yet available instead of a fabricated key list", async () => {
+    await openTab(/^api$/i);
+    expect(await screen.findByText(/inhouse gateway api key issuance.*implemented in a later block/i)).toBeInTheDocument();
+  });
+});
+
+describe("Settings — Accounting tab (Block 10 audit fix)", () => {
+  test("shows cost accounting as not yet available instead of fabricated dollar figures", async () => {
+    await openTab(/^accounting$/i);
+    expect(await screen.findByText(/no cost or usage figures/i)).toBeInTheDocument();
+  });
+
+  test("lists real vendor billing types from the API, with no hardcoded provider inventory", async () => {
+    vi.mocked(api.listVendors).mockResolvedValue({
+      vendors: [sampleVendor({ displayName: "Configured Vendor", billingType: "metered" })],
+    });
+    await openTab(/^accounting$/i);
+    expect(await screen.findByText("Configured Vendor")).toBeInTheDocument();
+    for (const banned of ["z.ai", "Cerebras", "Alibaba", "OpenCode"]) {
+      expect(screen.queryByText(new RegExp(banned, "i"))).not.toBeInTheDocument();
+    }
+  });
+});
+
+describe("Settings — System tab (Block 10 audit fix)", () => {
+  test("displays real data from GET /v1/health instead of a fabricated infra status board", async () => {
+    vi.mocked(api.getSystemHealth).mockResolvedValue(
+      sampleHealth({ environment: "beta-production", service: "inhouse-api" }),
+    );
+    await openTab(/^system$/i);
+    expect(await screen.findByText("beta-production")).toBeInTheDocument();
+    expect(screen.getByText("inhouse-api")).toBeInTheDocument();
+  });
+
+  test("shows the audit log as not yet available instead of fabricated log entries", async () => {
+    await openTab(/^system$/i);
+    expect(await screen.findByText(/audit event capture.*implemented in a later block/i)).toBeInTheDocument();
+  });
+
+  test("surfaces a health-check failure with retry", async () => {
+    vi.mocked(api.getSystemHealth)
+      .mockRejectedValueOnce(new ApiError(503, "UNAVAILABLE", "Service unavailable.", "req-3"))
+      .mockResolvedValueOnce(sampleHealth());
+    await openTab(/^system$/i);
+    expect(await screen.findByText("Service unavailable.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /retry/i }));
+    await waitFor(() => expect(api.getSystemHealth).toHaveBeenCalledTimes(2));
   });
 });
