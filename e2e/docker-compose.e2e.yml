@@ -1,0 +1,24 @@
+# TEST-ONLY overlay (Block 13). Not part of the production deployment:
+#   docker compose -f docker-compose.yml -f e2e/docker-compose.e2e.yml up -d inhouse-mock-provider
+# Runs the disposable mock provider on inhouse-net ONLY. No `ports:` —
+# nothing is published to the host. Remove with:
+#   docker compose -f docker-compose.yml -f e2e/docker-compose.e2e.yml rm -sf inhouse-mock-provider
+services:
+  inhouse-mock-provider:
+    build:
+      context: ./e2e/mock-provider
+      dockerfile: Dockerfile
+    image: inhouse-mock-provider:e2e
+    container_name: inhouse-mock-provider
+    restart: "no"
+    labels:
+      inhouse.test-only: "true"
+    networks:
+      - inhouse-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:9000/_mock/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 2s
+
