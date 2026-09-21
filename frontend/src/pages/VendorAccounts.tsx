@@ -6,6 +6,7 @@ import { StatusPill } from "../components/ui/StatusPill";
 import { FormField, TextInput } from "../components/ui/FormField";
 import { formatDateTime, titleCase } from "../lib/format";
 import { api, ApiError } from "../lib/api";
+import { DEFAULT_CREDENTIAL_TYPE } from "../lib/vendorProtocols";
 import type { HealthState } from "../types/domain";
 import type {
   AccountReadinessApi,
@@ -473,7 +474,7 @@ function AccountInspector({
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const [registeringCredential, setRegisteringCredential] = useState(false);
-  const [credentialType, setCredentialType] = useState("api_key");
+  const [credentialType, setCredentialType] = useState(DEFAULT_CREDENTIAL_TYPE);
   const [secretMode, setSecretMode] = useState<"managed" | "external">("managed");
   const [secret, setSecret] = useState("");
   const [secretRef, setSecretRef] = useState("");
@@ -540,12 +541,13 @@ function AccountInspector({
           : { vendorAccountId: account.id, credentialType, secretRef },
       );
       setRegisteringCredential(false);
-      // Never retain the raw secret in state any longer than it takes to submit it.
-      setSecret("");
-      setSecretRef("");
       await onCredentialsChanged();
     } catch (error) {
       onError(errorMessage(error, "Failed to register credential."));
+    } finally {
+      // Never retain the raw secret in state any longer than it takes to submit it — success or failure.
+      setSecret("");
+      setSecretRef("");
     }
   }
 
@@ -568,11 +570,12 @@ function AccountInspector({
         rotateSecretMode === "managed" ? { secret: rotateSecret } : { secretRef: rotateSecretRef },
       );
       setRotatingId(null);
-      setRotateSecret("");
-      setRotateSecretRef("");
       await onCredentialsChanged();
     } catch (error) {
       onError(errorMessage(error, "Failed to rotate credential."));
+    } finally {
+      setRotateSecret("");
+      setRotateSecretRef("");
     }
   }
 

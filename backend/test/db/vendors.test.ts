@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { withMigratedApp, truncateAll } from "./helpers.js";
 import { CapabilitiesRepository } from "../../src/repositories/capabilitiesRepository.js";
 import { WorkloadsRepository } from "../../src/repositories/workloadsRepository.js";
+import { DEFAULT_VENDOR_PROTOCOL } from "../../../frontend/src/lib/vendorProtocols.ts";
 
 const sampleVendorPayload = {
   slug: "test-vendor-01",
@@ -625,5 +626,38 @@ test("audit event metadata never contains secret material", async () => {
     assert.equal(events.rows.length, 1);
     const metadataText = JSON.stringify(events.rows[0].metadata);
     assert.ok(!metadataText.includes("vault://super-secret-path"));
+  });
+});
+
+test("a vendor created with the Control Panel's default protocol persists it and resolves to a registered adapter", async () => {
+  await withMigratedApp(async (app, pool) => {
+    await truncateAll(pool, "inhouse");
+    // Same field names/values the Add Vendor form submits, with its untouched default protocol.
+    const payload = { ...sampleVendorPayload, slug: "form-default-vendor", protocol: DEFAULT_VENDOR_PROTOCOL };
+    const createRes = await app.inject({ headers: ADMIN, method: "POST", url: "/v1/vendors", payload });
+    assert.equal(createRes.statusCode, 201);
+    const created = createRes.json().vendor;
+    assert.equal(created.protocol, "openai-compatible");
+    assert.equal(created.adapterSupported, true);
+
+    const stored = await pool.query("SELECT protocol FROM vendors WHERE id = $1", [created.id]);
+    assert.equal(stored.rows[0].protocol, "openai-compatible");
+
+    const detail = (await app.inject({ headers: ADMIN, method: "GET", url: `/v1/vendors/${created.id}` })).json().vendor;
+    assert.equal(detail.adapterSupported, true);
+    const listed = (await app.inject({ headers: ADMIN, method: "GET", url: "/v1/vendors" })).json().vendors;
+    assert.equal(listed.find((v: { id: string }) => v.id === created.id).adapterSupported, true);
+  });
+});
+
+test("the retired underscore spelling would create a vendor with NO adapter (drift is observable, never executable)", async () => {
+  await withMigratedApp(async (app, pool) => {
+    await truncateAll(pool, "inhouse");
+    const res = await app.inject({
+      headers: ADMIN, method: "POST", url: "/v1/vendors",
+      payload: { ...sampleVendorPayload, slug: "underscore-drift", protocol: "openai_compatible" },
+    });
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.json().vendor.adapterSupported, false);
   });
 });

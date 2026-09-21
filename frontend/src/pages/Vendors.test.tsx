@@ -171,6 +171,7 @@ describe("Vendors page", () => {
 
     await userEvent.type(within(dialog).getByLabelText(/vendor slug/i), "new-vendor");
     await userEvent.type(within(dialog).getByLabelText(/vendor name/i), "New Vendor");
+    // Deliberately do NOT touch the API Protocol dropdown: the untouched default must be executable.
 
     await userEvent.click(within(dialog).getByRole("button", { name: /^add vendor$/i }));
 
@@ -178,9 +179,22 @@ describe("Vendors page", () => {
     const payload = vi.mocked(api.createVendor).mock.calls[0]?.[0];
     expect(payload?.slug).toBe("new-vendor");
     expect(payload?.displayName).toBe("New Vendor");
+    // The untouched default must be the backend adapter's canonical protocol id (exact-match registry).
+    expect(payload?.protocol).toBe("openai-compatible");
     // The Add Vendor form must never collect a raw provider secret.
     expect(payload).not.toHaveProperty("secret");
     expect(payload).not.toHaveProperty("apiKey");
+  });
+
+  test("Add Vendor offers only executable protocols: no underscore or adapter-less option", async () => {
+    vi.mocked(api.listVendors).mockResolvedValue({ vendors: [] });
+    render(<Vendors />);
+    await screen.findByText(/no vendors configured/i);
+    await userEvent.click(screen.getByRole("button", { name: /add vendor/i }));
+    const dialog = await screen.findByRole("dialog");
+    const select = within(dialog).getByLabelText(/api protocol/i) as HTMLSelectElement;
+    expect(select.value).toBe("openai-compatible");
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(["openai-compatible"]);
   });
 
   test("disabling a vendor from the card menu calls api.disableVendor", async () => {
@@ -368,7 +382,7 @@ describe("Vendors page — Credential Vault (Block 08)", () => {
     await waitFor(() => expect(api.createCredential).toHaveBeenCalledTimes(1));
     const [calledVendorId, payload] = vi.mocked(api.createCredential).mock.calls[0]!;
     expect(calledVendorId).toBe(vendor.id);
-    expect(payload).toMatchObject({ vendorAccountId: "acct_1", credentialType: "api_key", secret: "sk-raw-secret-value" });
+    expect(payload).toMatchObject({ vendorAccountId: "acct_1", credentialType: "api-key", secret: "sk-raw-secret-value" });
     expect(payload).not.toHaveProperty("secretRef");
 
     // The raw secret never lingers in the DOM after a successful save.
@@ -395,7 +409,7 @@ describe("Vendors page — Credential Vault (Block 08)", () => {
 
     await waitFor(() => expect(api.createCredential).toHaveBeenCalledTimes(1));
     const payload = vi.mocked(api.createCredential).mock.calls[0]![1];
-    expect(payload).toMatchObject({ vendorAccountId: "acct_1", credentialType: "api_key", secretRef: "vault://external/path" });
+    expect(payload).toMatchObject({ vendorAccountId: "acct_1", credentialType: "api-key", secretRef: "vault://external/path" });
     expect(payload).not.toHaveProperty("secret");
   });
 
@@ -441,6 +455,37 @@ describe("Vendors page — Credential Vault (Block 08)", () => {
     await userEvent.click(screen.getByRole("button", { name: /^save credential$/i }));
 
     expect(await screen.findByText(/exactly one of "secret" or "secretref" must be provided/i)).toBeInTheDocument();
+  });
+
+  test("a failed credential creation does not retain the raw secret in the form", async () => {
+    await openCredentialTabWithAccount();
+    await screen.findByText(/no credentials configured/i);
+    vi.mocked(api.createCredential).mockRejectedValue(new ApiError(500, "INTERNAL_ERROR", "Vault unavailable.", "req-4"));
+
+    await userEvent.click(screen.getByRole("button", { name: /add credential/i }));
+    await userEvent.type(screen.getByPlaceholderText(/paste the provider secret/i), "sk-raw-secret-value");
+    await userEvent.click(screen.getByRole("button", { name: /^save credential$/i }));
+
+    expect(await screen.findByText(/vault unavailable/i)).toBeInTheDocument();
+    // The form may stay open for a retry, but the typed secret must be gone from state and DOM.
+    expect(screen.getByPlaceholderText(/paste the provider secret/i)).toHaveValue("");
+    expect(document.body.innerHTML).not.toContain("sk-raw-secret-value");
+    expect(window.sessionStorage.length + window.localStorage.length).toBe(0);
+  });
+
+  test("a failed secret rotation does not retain the new raw secret in the form", async () => {
+    vi.mocked(api.listCredentials).mockResolvedValue({ credentials: [managedCredential()] });
+    await openCredentialTabWithAccount();
+    await screen.findByText(/\*\*\*\*\.\.\.wxyz/);
+    vi.mocked(api.updateCredential).mockRejectedValue(new ApiError(500, "INTERNAL_ERROR", "Vault unavailable.", "req-5"));
+
+    await userEvent.click(await screen.findByRole("button", { name: /rotate secret/i }));
+    await userEvent.type(screen.getByPlaceholderText(/paste the new provider secret/i), "sk-rotated-secret");
+    await userEvent.click(screen.getByRole("button", { name: /^save new secret$/i }));
+
+    expect(await screen.findByText(/vault unavailable/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/paste the new provider secret/i)).toHaveValue("");
+    expect(document.body.innerHTML).not.toContain("sk-rotated-secret");
   });
 });
 

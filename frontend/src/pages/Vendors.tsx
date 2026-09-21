@@ -10,6 +10,7 @@ import { Drawer } from "../components/ui/Drawer";
 import { FormField, Select, TextInput } from "../components/ui/FormField";
 import { formatDateTime, titleCase } from "../lib/format";
 import { api, ApiError } from "../lib/api";
+import { DEFAULT_VENDOR_PROTOCOL, VENDOR_PROTOCOLS } from "../lib/vendorProtocols";
 import type { HealthState } from "../types/domain";
 import type {
   CapabilityApi,
@@ -620,7 +621,7 @@ function AddVendorDrawer({
   const [displayName, setDisplayName] = useState("");
   const [description, setDescription] = useState("");
   const [vendorType, setVendorType] = useState("general_api");
-  const [protocol, setProtocol] = useState("custom_rest");
+  const [protocol, setProtocol] = useState(DEFAULT_VENDOR_PROTOCOL);
   const [baseEndpoint, setBaseEndpoint] = useState("https://api.provider.com/v1");
   const [billingType, setBillingType] = useState("metered");
   const [capabilityIds, setCapabilityIds] = useState<Set<string>>(new Set());
@@ -727,9 +728,11 @@ function AddVendorDrawer({
             </FormField>
             <FormField label="API Protocol">
               <Select value={protocol} onChange={(e) => setProtocol(e.target.value)}>
-                <option value="openai_compatible">OpenAI-compatible</option>
-                <option value="anthropic_compatible">Anthropic-compatible</option>
-                <option value="custom_rest">Custom REST</option>
+                {VENDOR_PROTOCOLS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
               </Select>
             </FormField>
             <FormField label="Base API Endpoint">
