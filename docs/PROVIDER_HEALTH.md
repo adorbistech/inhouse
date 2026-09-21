@@ -206,3 +206,12 @@ Configuration failures return 404/409 and record nothing. A credential that
 cannot be decrypted records an `unhealthy`/`configuration` observation
 (`CREDENTIAL_UNAVAILABLE`) and never contacts the provider. This is not
 execution: no routing, retry, fallback, usage ledger or client keys.
+
+## Readiness and credential test timestamps (Block 14B-1)
+
+`GET .../readiness` derives an operational readiness from existing rows (see
+"Account readiness" in `docs/API.md`); it reads the persisted health snapshot
+and never records health. `POST .../verify` now also stamps the selected
+credential's `last_tested_at` (every attempt) and `last_successful_at`
+(`healthy` only) via the existing `markTested`. Still exactly one
+`checkHealth()` per verification, no retry/fallback.

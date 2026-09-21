@@ -183,6 +183,7 @@ A vendor may have multiple accounts; nothing in this API assumes a fixed
 |---|---|---|
 | `GET` | `/v1/vendors/:id/accounts/:accountId/health` | Current health snapshot |
 | `GET` | `/v1/vendors/:id/accounts/:accountId/health/events` | Recent observation history, most recent first. Optional `?limit=` (default 50, max 200) |
+| `GET` | `/v1/vendors/:id/accounts/:accountId/readiness` | Block 14B-1. Admin token only. A derived, read-time view over existing data — nothing is stored, and it never decrypts a credential, contacts a provider, writes health/audit/ledger rows, or affects routing or execution. 404 for an unknown vendor, unknown account, or an account addressed through another vendor. A disabled vendor/account still returns 200 with `readiness: "disabled"`. Returns `{ readiness: { readiness, reason, vendorId, vendorAccountId, vendorStatus, accountStatus, adapterSupported, credential: { present, enabled, usable, lastTestedAt, lastSuccessfulAt }, health: { status, lastCheckedAt, lastSuccessAt, lastFailureAt, consecutiveFailures, lastLatencyMs, lastErrorCategory, lastSafeErrorCode } } }`. See "Account readiness" below |
 | `POST` | `/v1/vendors/:id/accounts/:accountId/verify` | Block 14A. Requires the admin token (client API keys are rejected). Validates that the account belongs to the vendor (404 otherwise, including cross-vendor), that vendor and account are enabled, that an adapter is registered for the vendor's protocol, and that an enabled credential exists (409 otherwise) — all before any secret is decrypted. Then performs exactly one bounded adapter health check (`vendors.timeout_ms`, else the shared default), records the result as a health observation/event via `ProviderHealthService`, and writes a `vendor_account.verified` audit event. Returns `{ verification: { vendorId, vendorAccountId, protocol, status, latencyMs, errorCategory, safeErrorCode, message, checkedAt } }` — never a provider response body or credential. A credential that cannot be decrypted yields `unhealthy` / `configuration` / `CREDENTIAL_UNAVAILABLE` without contacting the provider. Creates no usage-ledger row, performs no model execution or routing, and has no retry or fallback |
 
 There is no endpoint that accepts a caller-supplied health observation.
@@ -532,3 +533,29 @@ the logger level — never written to logs, even at debug level.
 ## Execution & API keys (Block 12)
 
 See [EXECUTION.md](EXECUTION.md) for `POST /v1/chat/completions`, `POST /v1/messages` (client-key authenticated, workload-scoped, streaming and tool-capable) and the admin-token-guarded `/v1/api-keys*` and `/v1/usage`.
+
+### Account readiness (Block 14B-1)
+
+`readiness` is the first match of this precedence:
+
+| # | `readiness` | `reason` | When |
+|---|---|---|---|
+| 1 | `disabled` | `vendor_not_enabled` / `account_not_enabled` | vendor or account `status` is not `enabled` |
+| 2 | `unsupported` | `no_adapter_for_protocol` | no adapter is registered for the vendor's protocol |
+| 3 | `missing_credential` | `no_enabled_credential` / `credential_not_usable` | no enabled credential, or the selected one holds only an external `secretRef` (Inhouse cannot decrypt it) |
+| 4 | `unverified` | `never_verified` | no health snapshot, or health `unknown` |
+| 5 | `unhealthy` | `last_check_unhealthy` | last recorded health is `unhealthy` |
+| 6 | `ready` | `last_check_healthy` / `last_check_degraded` | otherwise (`degraded` is still usable, as in routing/execution) |
+
+**Selected credential**: the first `enabled` credential ordered by `created_at`
+ascending, `id` as tie-break. This is what verification and execution already
+do; readiness only makes it explicit. `credential.usable` means a
+vault-managed secret is present (column inspection only — no decryption).
+`credential.lastTestedAt`/`lastSuccessfulAt` belong to the selected credential.
+No secret, `secretRef`, ciphertext, fingerprint or provider response is ever
+returned.
+
+**Verification timestamps**: every `POST .../verify` that reaches a selected
+credential sets its `lastTestedAt`; only a `healthy` result also sets
+`lastSuccessfulAt`. (A credential that cannot be decrypted counts as a failed
+test.) Readiness is not persisted and is not consulted by routing or execution.

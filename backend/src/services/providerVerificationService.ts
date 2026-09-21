@@ -124,6 +124,9 @@ export class ProviderVerificationService {
 
     // 3. Record through the existing health service, then a safe audit event.
     const recorded = await this.health.recordObservation(vendor.id, account.id, observation);
+    // Every attempt against the selected credential stamps `last_tested_at`; only a healthy result
+    // stamps `last_successful_at` (markTested, Block 06 — previously unwired).
+    await this.credentials.markTested(credential.id, observation.status === "healthy");
     await new AuditEventsRepository(this.pool).create({
       actor_id: ctx.actorId,
       action: "vendor_account.verified",

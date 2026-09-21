@@ -36,6 +36,7 @@ const CONTROL_PLANE: Probe[] = [
   { method: "PATCH", url: `/v1/vendors/${ID}/credentials/${ID}`, payload: {} },
   { method: "DELETE", url: `/v1/vendors/${ID}/credentials/${ID}` },
   { method: "GET", url: `/v1/vendors/${ID}/accounts/${ID}/health` },
+  { method: "GET", url: `/v1/vendors/${ID}/accounts/${ID}/readiness` },
   { method: "GET", url: `/v1/vendors/${ID}/accounts/${ID}/health/events` },
   { method: "GET", url: "/v1/models" },
   { method: "POST", url: "/v1/models", payload: {} },
