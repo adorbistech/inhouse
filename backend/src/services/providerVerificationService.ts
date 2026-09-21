@@ -7,6 +7,7 @@ import { VendorCredentialsRepository } from "../repositories/vendorCredentialsRe
 import { VendorsRepository } from "../repositories/vendorsRepository.js";
 import { validateHealthObservationInput, type HealthObservationInput } from "../validation/providerHealth.js";
 import type { AdapterRegistry } from "./adapters/adapterRegistry.js";
+import { selectCandidateCredential } from "./accountCredentialSelection.js";
 import { getDecryptedCredentialSecret } from "./credentialSecretAccess.js";
 import { DEFAULT_PROVIDER_TIMEOUT_MS } from "./providerAdapter.js";
 import { ProviderHealthService } from "./providerHealthService.js";
@@ -76,7 +77,8 @@ export class ProviderVerificationService {
     if (!adapter) {
       throw new ConflictError(`No adapter is registered for the vendor's technical protocol "${vendor.protocol}".`);
     }
-    const credential = (await this.credentials.listByVendorAccountId(account.id)).find((c) => c.status === "enabled");
+    // The same deterministic rule readiness and execution use (created_at, then id).
+    const credential = selectCandidateCredential(await this.credentials.listByVendorAccountId(account.id));
     if (!credential) throw new ConflictError("This account has no enabled credential to verify.");
 
     // 2. Credential access, then one bounded adapter health check.

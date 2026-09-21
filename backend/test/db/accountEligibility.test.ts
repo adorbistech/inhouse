@@ -123,6 +123,8 @@ test("an unsupported adapter protocol is rejected BEFORE decrypt: decrypt count 
       const rows = await ledger(c.pool);
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.error_category, "configuration");
+      assert.equal(rows[0]?.vendor_account_id, null, "no account was selected before the adapter was rejected");
+      assert.equal(rows[0]?.vendor_id, c.vendorId, "the vendor is still attributed");
     },
     { protocol: "no-such-protocol" },
   );
@@ -288,5 +290,152 @@ test("streaming: an ineligible account fails before the stream opens with a norm
     assert.ok(!res.body.includes("data:"));
     assertNothingAttempted(c);
     assert.equal((await ledger(c.pool)).length, 1, "exactly one ledger row");
+  });
+});
+
+// ------------------------------------------------------------------ tier fallback (14D)
+
+interface FallbackCtx {
+  app: FastifyInstance;
+  pool: Pool;
+  vault: CountingVault;
+  primary: Awaited<ReturnType<typeof startMockProviderServer>>;
+  fallback: Awaited<ReturnType<typeof startMockProviderServer>>;
+  primaryTierId: string;
+  fallbackTierId: string;
+  workloadId: string;
+  alias: string;
+  rawKey: string;
+  primaryVendorId: string;
+  addRule: (conditionType: string) => Promise<void>;
+}
+
+/** Tier 0: a vendor with NO accounts yet (each test adds the structurally unusable ones); tier 1: a fully working vendor. */
+async function fallbackScenario(fn: (c: FallbackCtx) => Promise<void>, primaryOverrides: Record<string, unknown> = {}): Promise<void> {
+  const primary = await startMockProviderServer("success");
+  const fallback = await startMockProviderServer("success");
+  const vault = new CountingVault(TEST_VAULT_KEY);
+  try {
+    await withMigratedApp(
+      async (app, pool) => {
+        await truncateAll(pool, "inhouse");
+        const workload = await createWorkload(pool);
+
+        const pv = await createVendor(app, primary.baseEndpoint, { automaticFallback: true, ...primaryOverrides });
+        const pm = await createModel(app, pv.id, { inhouseAlias: `primary-${Math.random().toString(36).slice(2, 8)}` });
+        await attachVendorToWorkload(app, pv.id, workload.id);
+        await attachModelToWorkload(app, pm.id, workload.id);
+        const primaryTier = await createTier(app, workload.id, pv.id, pm.id, { tierNumber: 0 });
+
+        const fv = await createVendor(app, fallback.baseEndpoint);
+        const fm = await createModel(app, fv.id, { inhouseAlias: `fallback-${Math.random().toString(36).slice(2, 8)}` });
+        await attachVendorToWorkload(app, fv.id, workload.id);
+        await attachModelToWorkload(app, fm.id, workload.id);
+        await createAccountAndCredential(app, fv.id, "secret-fallback-vendor-00000");
+        const fallbackTier = await createTier(app, workload.id, fv.id, fm.id, { tierNumber: 1 });
+
+        const { rawKey } = await createApiKey(app, [workload.id]);
+        const addRule = async (conditionType: string) => {
+          const res = await app.inject({
+            method: "POST",
+            url: `/v1/routing/workloads/${workload.id}/fallback-rules`,
+            headers: ADMIN,
+            payload: { fromTierId: primaryTier.id, toTierId: fallbackTier.id, conditionType, priority: 0, enabled: true },
+          });
+          assert.equal(res.statusCode, 201, res.body);
+        };
+        await fn({
+          app, pool, vault, primary, fallback,
+          primaryTierId: primaryTier.id, fallbackTierId: fallbackTier.id,
+          workloadId: workload.id, alias: pm.inhouseAlias as string, rawKey, primaryVendorId: pv.id, addRule,
+        });
+      },
+      { credentialVault: vault },
+    );
+  } finally {
+    await primary.close();
+    await fallback.close();
+  }
+}
+
+const postFallback = (c: FallbackCtx) =>
+  c.app.inject({
+    method: "POST",
+    url: "/v1/chat/completions",
+    headers: { authorization: `Bearer ${c.rawKey}` },
+    payload: { workloadId: c.workloadId, model: c.alias, messages: [{ role: "user", content: "hi" }] },
+  });
+
+async function addPrimaryAccount(c: FallbackCtx, slug: string, opts: { secretRef?: string; status?: string } = {}) {
+  const account = (
+    await c.app.inject({
+      method: "POST",
+      url: `/v1/vendors/${c.primaryVendorId}/accounts`,
+      headers: ADMIN,
+      payload: { slug, displayName: slug, status: opts.status ?? "enabled" },
+    })
+  ).json().account;
+  if (opts.secretRef) {
+    const res = await c.app.inject({
+      method: "POST",
+      url: `/v1/vendors/${c.primaryVendorId}/credentials`,
+      headers: ADMIN,
+      payload: { vendorAccountId: account.id, credentialType: "api_key", secretRef: opts.secretRef },
+    });
+    assert.equal(res.statusCode, 201, res.body);
+  } else if (opts.status === "disabled") {
+    const res = await c.app.inject({
+      method: "POST",
+      url: `/v1/vendors/${c.primaryVendorId}/credentials`,
+      headers: ADMIN,
+      payload: { vendorAccountId: account.id, credentialType: "api_key", secret: "secret-disabled-primary-000" },
+    });
+    assert.equal(res.statusCode, 201, res.body);
+  }
+}
+
+test("fallback: a primary whose accounts are all structurally unusable falls through an on_error rule to the fallback tier", async () => {
+  await fallbackScenario(async (c) => {
+    await addPrimaryAccount(c, "external-only", { secretRef: "vault://external/primary" });
+    await addPrimaryAccount(c, "disabled", { status: "disabled" });
+    await addPrimaryAccount(c, "bare");
+    await c.addRule("on_error");
+
+    const res = await postFallback(c);
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(c.primary.requestCount(), 0, "the unusable primary is never contacted");
+    assert.equal(c.fallback.requestCount(), 1);
+    assert.deepEqual(c.fallback.receivedAuthHeaders, [bearerOf("secret-fallback-vendor-00000")]);
+    assert.equal(c.vault.decrypts, 1, "only the fallback credential is ever decrypted");
+
+    const rows = await ledger(c.pool);
+    assert.equal(rows.length, 1, "exactly one ledger row per execution");
+    assert.equal(rows[0]?.status, "success");
+    assert.equal(rows[0]?.is_fallback, true);
+    assert.equal(rows[0]?.attempt_count, 2);
+    assert.equal(rows[0]?.primary_tier_id, c.primaryTierId);
+    assert.equal(rows[0]?.fallback_tier_id, c.fallbackTierId);
+    assert.ok(!res.body.includes("vault://external/primary"));
+  });
+});
+
+test("fallback: an on_5xx rule does not match a configuration failure, so there is no fallback and the failure is reported", async () => {
+  await fallbackScenario(async (c) => {
+    await addPrimaryAccount(c, "external-only", { secretRef: "vault://external/primary" });
+    await c.addRule("on_5xx");
+
+    const res = await postFallback(c);
+    assert.equal(res.statusCode, 502);
+    assert.equal(res.json().error.code, "CONFIGURATION");
+    assert.equal(c.primary.requestCount(), 0);
+    assert.equal(c.fallback.requestCount(), 0, "the fallback tier must not be contacted");
+    assert.equal(c.vault.decrypts, 0);
+
+    const rows = await ledger(c.pool);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.is_fallback, false);
+    assert.equal(rows[0]?.attempt_count, 1);
+    assert.equal(rows[0]?.error_category, "configuration");
+    assert.equal(rows[0]?.fallback_tier_id, null);
   });
 });

@@ -247,3 +247,43 @@ test("verify works against the real OpenAI-compatible adapter registered by defa
     })(),
   );
 });
+
+test("verification selects the same credential as readiness and execution: identical created_at resolves on the lowest id", async () => {
+  for (const insertLowestFirst of [true, false]) {
+    await withProvider("success", async ({ app, pool, baseEndpoint, auth }) => {
+      const { vendor, account, credential: first } = await setUp(app, pool, baseEndpoint);
+      const secondSecret = "second-managed-secret-000000";
+      const second = (
+        await app.inject({
+          method: "POST",
+          url: `/v1/vendors/${vendor.id}/credentials`,
+          headers: ADMIN,
+          payload: { vendorAccountId: account.id, credentialType: "api_key", secret: secondSecret },
+        })
+      ).json().credential;
+
+      const byId = [first, second].sort((a, b) => (a.id < b.id ? -1 : 1));
+      const [lowest, highest] = byId as [typeof first, typeof first];
+      const secretOf = (id: string) => (id === first.id ? REAL_SECRET : secondSecret);
+
+      // Force an exact tie. Touch rows in the requested order so physical row order can favor either one.
+      const order = insertLowestFirst ? [lowest, highest] : [highest, lowest];
+      for (const c of order) {
+        await pool.query("UPDATE vendor_credentials SET created_at = '2026-01-01T00:00:00Z' WHERE id = $1", [c.id]);
+      }
+
+      const res = await app.inject({ method: "POST", url: verifyUrl(vendor.id, account.id), headers: ADMIN });
+      assert.equal(res.statusCode, 200, res.body);
+      assert.deepEqual(auth, [`Bearer ${secretOf(lowest.id)}`], "the adapter was called with the lowest-id credential's secret");
+
+      // Only the selected credential is stamped.
+      const stamped = (await pool.query("SELECT id FROM vendor_credentials WHERE last_tested_at IS NOT NULL")).rows.map((r) => r.id);
+      assert.deepEqual(stamped, [lowest.id]);
+
+      // Readiness reports that same credential (its timestamps are the ones just stamped).
+      const readiness = (await app.inject({ method: "GET", url: `/v1/vendors/${vendor.id}/accounts/${account.id}/readiness`, headers: ADMIN })).json().readiness;
+      const testedAt = (await pool.query("SELECT last_tested_at FROM vendor_credentials WHERE id = $1", [lowest.id])).rows[0].last_tested_at as Date;
+      assert.equal(new Date(readiness.credential.lastTestedAt).getTime(), testedAt.getTime());
+    });
+  }
+});
