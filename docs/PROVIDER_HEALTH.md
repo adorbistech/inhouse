@@ -215,3 +215,41 @@ and never records health. `POST .../verify` now also stamps the selected
 credential's `last_tested_at` (every attempt) and `last_successful_at`
 (`healthy` only) via the existing `markTested`. Still exactly one
 `checkHealth()` per verification, no retry/fallback.
+
+## Frontend account operations (Block 14B-2)
+
+The Vendors page's Credential tab is the operational surface for an
+account. It adds no backend behavior; every value comes from an existing
+endpoint:
+
+| UI element | Endpoint |
+|---|---|
+| Readiness panel and account-list badges | `GET .../accounts/:accountId/readiness` |
+| Current health | `GET .../accounts/:accountId/health` |
+| Health history (collapsed until expanded, last 20) | `GET .../accounts/:accountId/health/events?limit=20` |
+| Verify Account | `POST .../accounts/:accountId/verify` |
+| Enable / Disable Account (disable asks for confirmation) | `PATCH` `{status:"enabled"}` / `DELETE .../accounts/:accountId` |
+| Edit Account (name, slug, external reference; empty reference is sent as `null`) | `PATCH .../accounts/:accountId` |
+| Credentials for the account | `GET/POST/PATCH/DELETE /v1/vendors/:id/credentials` |
+
+Rules the UI follows:
+
+- **Readiness is rendered, never computed.** `degraded` health appears as
+  readiness `ready` / `last_check_degraded`, exactly as the backend reports.
+- **No optimistic state.** After an account write the page re-reads the
+  vendor, readiness and health; after a credential write, credentials and
+  readiness; after verification, readiness, health, history and credentials.
+  Refresh is manual — there is no polling.
+- **Verification result and refresh failure are separate.** If verification
+  succeeded but a follow-up read failed, the result stays a success and a
+  note names the reads that could not be refreshed.
+- **Race safety.** Async results are stored under the account id that
+  requested them and stale or superseded responses are dropped, so a late
+  response for one account never appears under another.
+- **No secret material in the UI.** The API client drops the external
+  `secretRef` from credential responses on receipt; credentials are shown
+  as type, mode (Inhouse Vault / External Reference), the vault's masked
+  identifier, status and test timestamps. Typed secrets are cleared after
+  submit and discarded when the operator switches accounts.
+- The control plane uses the existing admin token only; an `ihk_` client
+  key is never used or accepted for these calls.

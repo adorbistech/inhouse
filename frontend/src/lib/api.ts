@@ -1,4 +1,5 @@
 import type {
+  AccountReadinessApi,
   ApiKeyApi,
   CapabilityApi,
   CreateApiKeyPayload,
@@ -127,6 +128,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+/**
+ * The credential wire shape includes the external `secretRef`. It is never
+ * needed by the UI, so it is dropped here, at the boundary, and never
+ * reaches component state. Only the fields `VendorCredentialApi` declares survive.
+ */
+function toSafeCredential(raw: VendorCredentialApi): VendorCredentialApi {
+  return {
+    id: raw.id,
+    vendorAccountId: raw.vendorAccountId,
+    credentialType: raw.credentialType,
+    status: raw.status,
+    hasManagedSecret: raw.hasManagedSecret,
+    maskedSecret: raw.maskedSecret,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+    lastTestedAt: raw.lastTestedAt,
+    lastSuccessfulAt: raw.lastSuccessfulAt,
+  };
+}
+
 export const api = {
   listVendors: (status?: string) =>
     request<{ vendors: VendorApi[] }>(`/vendors${status ? `?status=${encodeURIComponent(status)}` : ""}`),
@@ -170,7 +191,7 @@ export const api = {
   updateAccount: (
     vendorId: string,
     accountId: string,
-    patch: { displayName?: string; status?: string; externalAccountRef?: string },
+    patch: { slug?: string; displayName?: string; status?: string; externalAccountRef?: string | null },
   ) =>
     request<{ account: VendorAccountApi }>(`/vendors/${vendorId}/accounts/${accountId}`, {
       method: "PATCH",
@@ -181,7 +202,9 @@ export const api = {
     request<{ account: VendorAccountApi }>(`/vendors/${vendorId}/accounts/${accountId}`, { method: "DELETE" }),
 
   listCredentials: (vendorId: string) =>
-    request<{ credentials: VendorCredentialApi[] }>(`/vendors/${vendorId}/credentials`),
+    request<{ credentials: VendorCredentialApi[] }>(`/vendors/${vendorId}/credentials`).then((r) => ({
+      credentials: r.credentials.map(toSafeCredential),
+    })),
 
   createCredential: (
     vendorId: string,
@@ -192,7 +215,7 @@ export const api = {
     request<{ credential: VendorCredentialApi }>(`/vendors/${vendorId}/credentials`, {
       method: "POST",
       body: JSON.stringify(payload),
-    }),
+    }).then((r) => ({ credential: toSafeCredential(r.credential) })),
 
   updateCredential: (
     vendorId: string,
@@ -202,7 +225,7 @@ export const api = {
     request<{ credential: VendorCredentialApi }>(`/vendors/${vendorId}/credentials/${credentialId}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
-    }),
+    }).then((r) => ({ credential: toSafeCredential(r.credential) })),
 
   deleteCredential: (vendorId: string, credentialId: string) =>
     request<void>(`/vendors/${vendorId}/credentials/${credentialId}`, { method: "DELETE" }),
@@ -260,6 +283,9 @@ export const api = {
       method: "POST",
       body: "{}",
     }),
+
+  getAccountReadiness: (vendorId: string, accountId: string) =>
+    request<{ readiness: AccountReadinessApi }>(`/vendors/${vendorId}/accounts/${accountId}/readiness`),
 
   getAccountHealthEvents: (vendorId: string, accountId: string, limit?: number) =>
     request<{ events: ProviderHealthEventApi[] }>(

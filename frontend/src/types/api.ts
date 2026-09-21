@@ -45,14 +45,16 @@ export interface VendorAccountApi {
  * external reference — never a secret itself, unchanged since Block 06)
  * or an INHOUSE-vault-managed secret, indicated by `hasManagedSecret` and
  * displayed only as `maskedSecret`. The raw/encrypted secret value is
- * never part of this type — no API response ever includes it.
+ * never part of this type — no API response ever includes it. The wire
+ * response also carries the external `secretRef`; the API client
+ * (`lib/api.ts`) drops it on receipt so it never reaches UI state — the
+ * UI shows only *which* mode a credential uses (`hasManagedSecret`).
  */
 export interface VendorCredentialApi {
   id: string;
   vendorAccountId: string;
   credentialType: string;
   status: VendorStatus;
-  secretRef: string | null;
   hasManagedSecret: boolean;
   maskedSecret: string | null;
   createdAt: string;
@@ -201,6 +203,46 @@ export interface ProviderHealthApi {
   lastLatencyMs: number | null;
   lastErrorCategory: ProviderErrorCategory | null;
   lastSafeErrorCode: string | null;
+}
+
+/**
+ * Block 14B-1 — the backend-derived operational readiness of one account
+ * (`GET .../readiness`). The frontend renders this verbatim and never
+ * recomputes it. Safe metadata only.
+ */
+export type AccountReadinessState =
+  | "ready"
+  | "disabled"
+  | "unsupported"
+  | "missing_credential"
+  | "unverified"
+  | "unhealthy";
+
+export interface AccountReadinessApi {
+  readiness: AccountReadinessState;
+  reason: string;
+  vendorId: string;
+  vendorAccountId: string;
+  vendorStatus: VendorStatus;
+  accountStatus: VendorStatus;
+  adapterSupported: boolean;
+  credential: {
+    present: boolean;
+    enabled: boolean;
+    usable: boolean;
+    lastTestedAt: string | null;
+    lastSuccessfulAt: string | null;
+  };
+  health: {
+    status: ProviderHealthStatus;
+    lastCheckedAt: string | null;
+    lastSuccessAt: string | null;
+    lastFailureAt: string | null;
+    consecutiveFailures: number;
+    lastLatencyMs: number | null;
+    lastErrorCategory: ProviderErrorCategory | null;
+    lastSafeErrorCode: string | null;
+  };
 }
 
 /** Block 14A — the safe, normalized result of an admin-triggered verification. Never a provider response body or credential. */

@@ -251,9 +251,9 @@ can also switch modes (e.g. from a managed secret to an external
 
 Registering a credential is intentionally a separate action from creating
 a vendor — this API never asks for a provider secret as part of
-`POST /v1/vendors`. There is no "test connection against the provider"
-endpoint in this block; that requires a real provider adapter (a later
-block).
+`POST /v1/vendors`. Registering a credential does not itself contact the
+provider; an admin-triggered connection check exists separately as
+`POST .../accounts/:accountId/verify` (Block 14A, see above).
 
 ### Reference Data
 

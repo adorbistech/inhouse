@@ -202,8 +202,10 @@ This block assumes the operator:
 
 - Provider integrations, provider SDKs, or any call to a real provider —
   still not implemented.
-- Credential "test connection" — still not implemented (needs a
-  provider adapter).
+- Credential "test connection" — not part of Block 08. It was added
+  later as the admin-only account verification action (Block 14A,
+  `POST .../accounts/:accountId/verify`), which also stamps the selected
+  credential's `last_tested_at` / `last_successful_at` (Block 14B-1).
 - Model execution or a routing engine that would consume a decrypted
   credential — still not implemented.
 - Inhouse API authentication (`inhouse_api_keys`) — unrelated to this

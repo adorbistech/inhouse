@@ -273,10 +273,10 @@ There is no `/chat/completions`, `/messages`, `/generate`, or `/execute`
 route anywhere in this codebase. `execute()` is an internal primitive,
 callable only from within the backend process (today, only from tests) —
 a later, dedicated execution block will expose a controlled boundary over
-it. The frontend's "Test Connection" button remains disabled, with a
-tooltip that now distinguishes "no adapter registered for this protocol"
-from "an adapter exists, but connection testing/execution is a later
-block" — still never enabling it.
+it. (Historical, Block 10: the frontend's "Test Connection" button was
+disabled at that point. It was removed in Block 14B-2; the single
+operational action is now "Verify Account", which calls the Block 14A
+verify endpoint.)
 
 ## No Claude Code Integration
 
