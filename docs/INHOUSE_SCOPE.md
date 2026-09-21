@@ -2,7 +2,10 @@
 
 ## What Inhouse Is
 Inhouse is an independent beta project, developed in its own repository and
-working directory, separate from existing Adorbis systems.
+working directory, separate from existing Adorbis systems. It is the
+**Inhouse Coding API**: an isolated, Adorbis-controlled compatibility,
+routing and execution layer for developer clients (Claude Code and Claude
+Desktop Developer Mode). Provider credentials stay behind Inhouse.
 
 - **GitHub repository:** `adorbistech/inhouse`
 - **Working directory:** `/root/inhouse`
@@ -26,5 +29,16 @@ repositories, nginx, Docker, PostgreSQL, Redis, systemd configuration) are
   moving on to the next.
 
 ## Current Status
-This repository currently contains foundation documentation only. No
-frontend or backend application code has been created yet.
+The repository contains a working backend API (`backend/`), an admin
+frontend control plane (`frontend/`), a Docker Compose deployment
+(`docker-compose.yml`), and a test-only mock-provider E2E harness (`e2e/`).
+Blocks 0 through 14D are complete and locked.
+
+The authoritative definition of what Beta must prove, and how it is
+certified, is [BETA_ACCEPTANCE.md](BETA_ACCEPTANCE.md). Nothing in this
+repository is declared Beta-certified until the sign-off criteria in that
+document are met.
+
+Per-area behavior is documented in `EXECUTION.md`, `ROUTING_POLICY.md`,
+`PROVIDER_ADAPTERS.md`, `PROVIDER_HEALTH.md`, `CREDENTIAL_VAULT.md`,
+`API.md`, `DATABASE.md` and `DEPLOYMENT.md`.
