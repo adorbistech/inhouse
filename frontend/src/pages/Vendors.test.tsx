@@ -29,6 +29,7 @@ vi.mock("../lib/api", async (importOriginal) => {
       listWorkloads: vi.fn(),
       getAccountHealth: vi.fn(),
       getAccountHealthEvents: vi.fn(),
+      verifyAccount: vi.fn(),
     },
   };
 });
@@ -163,8 +164,8 @@ describe("Vendors page", () => {
     render(<Vendors />);
     await screen.findByText("Test Vendor");
 
-    await userEvent.click(screen.getByRole("button", { name: /vendor actions/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^disable$/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /vendor actions/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /^disable$/i }));
 
     await waitFor(() => expect(api.disableVendor).toHaveBeenCalledWith("vnd_1"));
   });
@@ -217,11 +218,11 @@ describe("Vendors page", () => {
 
     render(<Vendors />);
     await screen.findByText("Test Vendor");
-    await userEvent.click(screen.getByRole("button", { name: /credential/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /credential/i }));
 
     expect(await screen.findByText(/no credential configured/i)).toBeInTheDocument();
 
-    await userEvent.click(screen.getByText("Secondary Account"));
+    await userEvent.click(await screen.findByText("Secondary Account"));
     expect(await screen.findByText(/vault:\/\/secondary/)).toBeInTheDocument();
   });
 
@@ -255,7 +256,7 @@ describe("Vendors page", () => {
 
     render(<Vendors />);
     await screen.findByText("Test Vendor");
-    await userEvent.click(screen.getByRole("button", { name: /^capabilities$/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /^capabilities$/i }));
 
     expect(await screen.findByText(/no capabilities are defined/i)).toBeInTheDocument();
   });
@@ -297,7 +298,7 @@ describe("Vendors page — Credential Vault (Block 08)", () => {
     vi.mocked(api.getVendor).mockResolvedValue({ vendor: detail });
     render(<Vendors />);
     await screen.findByText("Test Vendor");
-    await userEvent.click(screen.getByRole("button", { name: /credential/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /credential/i }));
     return vendor;
   }
 
@@ -427,14 +428,14 @@ describe("Vendors page — Provider Health (Block 09)", () => {
     updatedAt: "2026-09-19T00:00:00Z",
   };
 
-  async function renderWithAccount() {
-    const vendor = sampleVendor();
+  async function renderWithAccount(vendorOverrides: Partial<VendorApi> = {}) {
+    const vendor = sampleVendor(vendorOverrides);
     const detail = toDetail(vendor, { accounts: [primaryAccount] });
     vi.mocked(api.listVendors).mockResolvedValue({ vendors: [vendor] });
     vi.mocked(api.getVendor).mockResolvedValue({ vendor: detail });
     render(<Vendors />);
     await screen.findByText("Test Vendor");
-    await userEvent.click(screen.getByRole("button", { name: /credential/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /credential/i }));
     return vendor;
   }
 
@@ -515,5 +516,113 @@ describe("Vendors page — Provider Health (Block 09)", () => {
     await renderWithAccount();
 
     expect(await screen.findByText(/unknown — not checked/i)).toBeInTheDocument();
+  });
+
+  test("Verify Account runs verification, shows the safe result and refreshes health", async () => {
+    vi.mocked(api.verifyAccount).mockResolvedValue({
+      verification: {
+        vendorId: "v1",
+        vendorAccountId: "acct_1",
+        protocol: "openai-compatible",
+        status: "unhealthy",
+        latencyMs: 42,
+        errorCategory: "authentication",
+        safeErrorCode: "401",
+        message: "Verification failed (authentication).",
+        checkedAt: "2026-09-19T12:00:00.000Z",
+      },
+    });
+    await renderWithAccount({ adapterSupported: true });
+
+    await userEvent.click(await screen.findByRole("button", { name: /verify account/i }));
+
+    expect(await screen.findByText(/Verification: Unhealthy/)).toBeInTheDocument();
+    expect(screen.getByText("Code: 401")).toBeInTheDocument();
+    expect(screen.getByText("42ms latency")).toBeInTheDocument();
+    expect(api.verifyAccount).toHaveBeenCalledTimes(1);
+    expect(api.getAccountHealth).toHaveBeenCalledTimes(2);
+  });
+
+  test("Verify Account is disabled when the vendor has no adapter", async () => {
+    await renderWithAccount({ adapterSupported: false });
+    expect(await screen.findByRole("button", { name: /verify account/i })).toBeDisabled();
+  });
+
+  const verificationFor = (accountId: string) => ({
+    vendorId: "vnd_1",
+    vendorAccountId: accountId,
+    protocol: "openai-compatible",
+    status: "healthy" as const,
+    latencyMs: 7,
+    errorCategory: null,
+    safeErrorCode: null,
+    message: `Verified ${accountId}.`,
+    checkedAt: "2026-09-19T12:00:00.000Z",
+  });
+  const healthFor = (accountId: string, status: "healthy" | "unknown") => ({
+    health: {
+      vendorAccountId: accountId,
+      status,
+      consecutiveFailures: 0,
+      lastCheckedAt: status === "healthy" ? "2026-09-19T12:00:00.000Z" : null,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      lastLatencyMs: null,
+      lastErrorCategory: null,
+      lastSafeErrorCode: null,
+    },
+  });
+
+  test("Verify Account is disabled when the vendor itself is disabled", async () => {
+    await renderWithAccount({ adapterSupported: true, status: "disabled" });
+    expect(await screen.findByRole("button", { name: /verify account/i })).toBeDisabled();
+  });
+
+  test("a verification started for one account is never shown under, or applied to, another account", async () => {
+    const secondAccount = { ...primaryAccount, id: "acct_2", slug: "secondary", displayName: "Secondary Account" };
+    const vendor = sampleVendor({ adapterSupported: true });
+    vi.mocked(api.listVendors).mockResolvedValue({ vendors: [vendor] });
+    vi.mocked(api.getVendor).mockResolvedValue({ vendor: toDetail(vendor, { accounts: [primaryAccount, secondAccount] }) });
+    vi.mocked(api.getAccountHealth).mockImplementation(async (_vendorId, accountId) =>
+      healthFor(accountId, "unknown"),
+    );
+    let finish: (v: { verification: ReturnType<typeof verificationFor> }) => void = () => {};
+    vi.mocked(api.verifyAccount).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    render(<Vendors />);
+    await screen.findByText("Test Vendor");
+    await userEvent.click(await screen.findByRole("button", { name: /credential/i }));
+
+    await userEvent.click(await screen.findByRole("button", { name: /verify account/i }));
+    expect(await screen.findByRole("button", { name: /verifying/i })).toBeDisabled();
+
+    await userEvent.click(await screen.findByText("Secondary Account"));
+    // Account B has no verification in flight, so it can be verified independently.
+    expect(await screen.findByRole("button", { name: /verify account/i })).toBeEnabled();
+
+    vi.mocked(api.getAccountHealth).mockImplementation(async (_vendorId, accountId) =>
+      healthFor(accountId, accountId === "acct_1" ? "healthy" : "unknown"),
+    );
+    finish({ verification: verificationFor("acct_1") });
+    await waitFor(() => expect(api.getAccountHealth).toHaveBeenCalledWith("vnd_1", "acct_1"));
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Verified acct_1/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/unknown — not checked/i)).toBeInTheDocument();
+
+    await userEvent.click(await screen.findByText("Primary Account"));
+    expect(await screen.findByText("Verified acct_1.")).toBeInTheDocument();
+  });
+
+  test("a failed health refresh after a successful verification does not report a verification failure", async () => {
+    vi.mocked(api.verifyAccount).mockResolvedValue({ verification: verificationFor("acct_1") });
+    await renderWithAccount({ adapterSupported: true });
+    await screen.findByText(/unknown — not checked/i);
+    vi.mocked(api.getAccountHealth).mockRejectedValue(new Error("refresh failed"));
+
+    await userEvent.click(await screen.findByRole("button", { name: /verify account/i }));
+
+    expect(await screen.findByText("Verified acct_1.")).toBeInTheDocument();
+    expect(screen.getByText(/could not be refreshed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/failed to verify account/i)).not.toBeInTheDocument();
   });
 });

@@ -17,8 +17,10 @@ No SQL lives here — every query goes through a typed repository.
   other files here: a single narrow function
   (`getDecryptedCredentialSecret`) that is the only place in this
   codebase allowed to return a decrypted provider secret. Never imported
-  by anything under `routes/`; reserved for a later trusted backend
-  execution path. See `docs/CREDENTIAL_VAULT.md`.
+  by anything under `routes/`; restricted to the explicitly allowlisted
+  trusted services `executionService.ts` and
+  `providerVerificationService.ts` (Block 14A), enforced by a guard test.
+  See `docs/CREDENTIAL_VAULT.md`.
 - `providerHealthService.ts` (Block 09) — provider-account health:
   records observations, maintains the current-snapshot table, serves
   history. Provider-agnostic (no vendor-type branching), makes no

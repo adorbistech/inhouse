@@ -131,16 +131,18 @@ credential's secret cannot be decrypted**, so an adapter cannot check
 health using a disabled credential either (see
 `test/db/adapterHealthIntegration.test.ts`).
 
-## Why No Write Endpoint
+## Why No Manual Health-Write Endpoint
 
-The API only exposes `GET .../health` and `GET .../health/events` —
-there is no `POST`/`PATCH` to record an observation over HTTP. Recording
-one (`ProviderHealthService.recordObservation`) is a plain internal
-service method, called directly by tests today and, later, by a real
-provider adapter. Exposing it as a public endpoint in this block would
-let any caller fabricate an account's health with no real check behind
-it — a data-integrity and trust problem with no corresponding benefit,
-since nothing in this codebase can perform a real check yet anyway.
+There is no `POST`/`PATCH` that lets a caller record an arbitrary
+observation over HTTP. Recording one (`ProviderHealthService.recordObservation`)
+is an internal service method; exposing it directly would let any caller
+fabricate an account's health with no real check behind it — a
+data-integrity and trust problem. Originally (Block 09) only tests called
+it. Since Block 14A the one HTTP write path is the authenticated
+**verification action** `POST .../verify` (see "Admin verification"
+below): it runs a real, bounded adapter health check and persists the
+normalized result through `recordObservation`. Callers can trigger a
+check but can never choose the resulting status.
 
 ## Disabled-Account Behavior
 
@@ -186,6 +188,21 @@ noise without adding information.
 - `/chat/completions`-style execution, Claude Code compatibility, prompt
   forwarding, or response normalization.
 - Usage/cost billing.
-- A write endpoint for health observations (see "Why No Write Endpoint").
+- A write endpoint for caller-supplied health observations (see "Why No Manual Health-Write Endpoint"; the verification action added in Block 14A runs a real check instead).
 - Any change to `vendor_accounts`, `vendor_credentials`, or any Block
   05–08 table.
+
+## Admin verification (Block 14A)
+
+`POST /v1/vendors/:id/accounts/:accountId/verify` (admin token only) runs
+`ProviderVerificationService`: validate vendor/account/enabled state/protocol
+adapter/enabled credential (all before any decryption), decrypt via
+`getDecryptedCredentialSecret`, call the adapter's `checkHealth()` once with
+the vendor's `timeout_ms` (default 30s), then record through
+`ProviderHealthService.recordObservation` (`source: "adapter"`) plus a
+`vendor_account.verified` audit event (ids, protocol, status, safe
+category/code, latency, request id — never a secret or provider body).
+Configuration failures return 404/409 and record nothing. A credential that
+cannot be decrypted records an `unhealthy`/`configuration` observation
+(`CREDENTIAL_UNAVAILABLE`) and never contacts the provider. This is not
+execution: no routing, retry, fallback, usage ledger or client keys.

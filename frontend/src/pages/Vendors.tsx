@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/ui/Icon";
 import { Button } from "../components/ui/Button";
 import { Chip } from "../components/ui/Chip";
@@ -14,6 +14,7 @@ import type {
   CapabilityApi,
   CreateVendorPayload,
   ProviderHealthApi,
+  ProviderVerificationApi,
   VendorAccountApi,
   VendorApi,
   VendorCredentialApi,
@@ -483,6 +484,7 @@ export function Vendors() {
                   <VendorAccountsAndCredentials
                     vendorId={selectedDetail.id}
                     adapterSupported={selectedDetail.adapterSupported}
+                    vendorEnabled={selectedDetail.status === "enabled"}
                     accounts={selectedDetail.accounts}
                     selectedAccount={selectedAccount}
                     credential={accountCredential}
@@ -602,6 +604,7 @@ export function Vendors() {
 function VendorAccountsAndCredentials({
   vendorId,
   adapterSupported,
+  vendorEnabled,
   accounts,
   selectedAccount,
   credential,
@@ -611,6 +614,7 @@ function VendorAccountsAndCredentials({
 }: {
   vendorId: string;
   adapterSupported: boolean;
+  vendorEnabled: boolean;
   accounts: VendorAccountApi[];
   selectedAccount: VendorAccountApi | undefined;
   credential: VendorCredentialApi | undefined;
@@ -631,6 +635,15 @@ function VendorAccountsAndCredentials({
   const [rotateSecret, setRotateSecret] = useState("");
   const [rotateSecretRef, setRotateSecretRef] = useState("");
   const [health, setHealth] = useState<ProviderHealthApi | null>(null);
+  const [verifyingAccountId, setVerifyingAccountId] = useState<string | null>(null);
+  const [verification, setVerification] = useState<ProviderVerificationApi | null>(null);
+  const [healthRefreshFailedFor, setHealthRefreshFailedFor] = useState<string | null>(null);
+  // Lets an in-flight verification tell whether its account is still the one on screen.
+  const selectedAccountIdRef = useRef<string | undefined>(undefined);
+  selectedAccountIdRef.current = selectedAccount?.id;
+  const verifying = selectedAccount !== undefined && verifyingAccountId === selectedAccount.id;
+  // Only ever show a result that belongs to the account currently selected.
+  const shownVerification = verification && verification.vendorAccountId === selectedAccount?.id ? verification : null;
 
   useEffect(() => {
     if (!selectedAccount) {
@@ -650,6 +663,29 @@ function VendorAccountsAndCredentials({
       cancelled = true;
     };
   }, [vendorId, selectedAccount]);
+
+  async function verifySelectedAccount() {
+    if (!selectedAccount) return;
+    const accountId = selectedAccount.id;
+    setVerifyingAccountId(accountId);
+    setVerification(null);
+    setHealthRefreshFailedFor(null);
+    try {
+      const { verification: result } = await api.verifyAccount(vendorId, accountId);
+      setVerification(result);
+      // A failed refresh must not turn a completed verification into a reported failure.
+      try {
+        const { health: refreshed } = await api.getAccountHealth(vendorId, accountId);
+        if (selectedAccountIdRef.current === accountId) setHealth(refreshed);
+      } catch {
+        setHealthRefreshFailedFor(accountId);
+      }
+    } catch (error) {
+      onError(error instanceof ApiError ? error.message : "Failed to verify account.");
+    } finally {
+      setVerifyingAccountId((current) => (current === accountId ? null : current));
+    }
+  }
 
   async function submitNewAccount() {
     try {
@@ -804,7 +840,29 @@ function VendorAccountsAndCredentials({
                   {health.lastErrorCategory && <span className="text-error">{titleCase(health.lastErrorCategory)}</span>}
                 </div>
               )}
+              <Button
+                variant="secondary"
+                onClick={verifySelectedAccount}
+                disabled={verifying || !vendorEnabled || selectedAccount.status !== "enabled" || !adapterSupported}
+              >
+                {verifying ? "Verifying…" : "Verify Account"}
+              </Button>
             </div>
+            {shownVerification && (
+              <div role="status" className="flex flex-wrap items-center gap-space-sm bg-surface p-space-sm font-code-dense text-code-dense text-on-surface-variant">
+                <span className={shownVerification.status === "healthy" ? "text-tertiary" : "text-error"}>
+                  Verification: {titleCase(shownVerification.status)}
+                </span>
+                <span>{shownVerification.message}</span>
+                {shownVerification.errorCategory && <span>Category: {titleCase(shownVerification.errorCategory)}</span>}
+                {shownVerification.safeErrorCode && <span>Code: {shownVerification.safeErrorCode}</span>}
+                {shownVerification.latencyMs !== null && <span>{shownVerification.latencyMs}ms latency</span>}
+                <span>Checked {formatDateTime(shownVerification.checkedAt)}</span>
+                {healthRefreshFailedFor === shownVerification.vendorAccountId && (
+                  <span>Verification completed, but the account health could not be refreshed.</span>
+                )}
+              </div>
+            )}
           </div>
           {credential ? (
             <>

@@ -7,10 +7,12 @@ import { VendorCredentialsRepository } from "../repositories/vendorCredentialsRe
  * secret. Deliberately kept out of `vendorService.ts` and never imported
  * by anything under `routes/` — every HTTP response uses the safe
  * credential DTO (see `routes/vendors.ts`'s `toCredentialResponse`), never
- * this. Reserved for a later, trusted backend execution path (a provider
- * adapter or routing execution engine); Block 08 does not call this from
- * anywhere itself — it only builds the boundary and proves it round-trips
- * (see test/db/credentialVault.test.ts).
+ * this. Restricted to an explicit allowlist of trusted server-side
+ * services: `executionService.ts` (Block 12, request execution) and
+ * `providerVerificationService.ts` (Block 14A, admin-triggered bounded
+ * health verification). The allowlist is enforced by the boundary test in
+ * test/db/controlPlaneAuth.test.ts — adding a caller means deliberately
+ * changing that test, never quietly importing this.
  */
 export async function getDecryptedCredentialSecret(
   pool: Pool,

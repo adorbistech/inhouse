@@ -12,6 +12,7 @@ import type {
   ModelListFilters,
   ProviderHealthApi,
   ProviderHealthEventApi,
+  ProviderVerificationApi,
   RoutingDecisionApi,
   RoutingFallbackRuleApi,
   RoutingPreviewPayload,
@@ -253,6 +254,12 @@ export const api = {
 
   getAccountHealth: (vendorId: string, accountId: string) =>
     request<{ health: ProviderHealthApi }>(`/vendors/${vendorId}/accounts/${accountId}/health`),
+
+  verifyAccount: (vendorId: string, accountId: string) =>
+    request<{ verification: ProviderVerificationApi }>(`/vendors/${vendorId}/accounts/${accountId}/verify`, {
+      method: "POST",
+      body: "{}",
+    }),
 
   getAccountHealthEvents: (vendorId: string, accountId: string, limit?: number) =>
     request<{ events: ProviderHealthEventApi[] }>(

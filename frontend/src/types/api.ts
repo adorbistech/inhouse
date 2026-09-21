@@ -203,6 +203,19 @@ export interface ProviderHealthApi {
   lastSafeErrorCode: string | null;
 }
 
+/** Block 14A — the safe, normalized result of an admin-triggered verification. Never a provider response body or credential. */
+export interface ProviderVerificationApi {
+  vendorId: string;
+  vendorAccountId: string;
+  protocol: string;
+  status: Exclude<ProviderHealthStatus, "unknown">;
+  latencyMs: number | null;
+  errorCategory: ProviderErrorCategory | null;
+  safeErrorCode: string | null;
+  message: string;
+  checkedAt: string;
+}
+
 export interface ProviderHealthEventApi {
   id: string;
   vendorAccountId: string;

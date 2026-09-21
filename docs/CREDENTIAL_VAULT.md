@@ -118,10 +118,15 @@ documentation:
 - **Decrypted secret** (`services/credentialSecretAccess.ts`,
   `getDecryptedCredentialSecret`) — the one function in this codebase
   allowed to return a raw provider secret. It is not imported by
-  anything under `routes/`, and Block 08 does not call it from anywhere
-  itself; it exists so a later, trusted backend execution path (a
-  provider adapter) has a single, auditable place to read from. There is
-  no HTTP endpoint that decrypts a secret, by design.
+  anything under `routes/`. Access is an intentionally narrow, explicit
+  allowlist of trusted server-side services: `services/executionService.ts`
+  (request execution, Block 12) and `services/providerVerificationService.ts`
+  (admin-triggered bounded health verification, Block 14A). The allowlist is
+  enforced by a guard test in `test/db/controlPlaneAuth.test.ts` that fails if
+  any other source file references the function — adding a caller is a
+  deliberate, reviewed change to that test, never a quiet import. Block 08
+  itself calls it from nowhere. There is no HTTP endpoint that decrypts or
+  returns a secret, by design.
 
 **Safe default: a disabled credential is never decrypted.** This
 function checks `status === "enabled"` before touching the vault and

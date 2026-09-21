@@ -307,7 +307,7 @@ test("every route module is either a declared public/execution module or guards 
   }
 });
 
-test("credential decryption boundary is unchanged: only executionService.ts calls getDecryptedCredentialSecret", () => {
+test("credential decryption boundary is narrow: only executionService.ts and providerVerificationService.ts (Block 14A) call getDecryptedCredentialSecret", () => {
   const root = join(import.meta.dirname, "..", "..", "src");
   const callers: string[] = [];
   const walk = (d: string) => {
@@ -318,5 +318,5 @@ test("credential decryption boundary is unchanged: only executionService.ts call
     }
   };
   walk(root);
-  assert.deepEqual(callers.sort(), ["services/credentialSecretAccess.ts", "services/executionService.ts"]);
+  assert.deepEqual(callers.sort(), ["services/credentialSecretAccess.ts", "services/executionService.ts", "services/providerVerificationService.ts"]);
 });

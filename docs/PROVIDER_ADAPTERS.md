@@ -242,11 +242,13 @@ disposable mock HTTP server (never a real provider), covering a
 successful check, an authentication failure, and a real timeout bounded
 by the vendor's configured `timeoutMs`.
 
-**No route or scheduled job calls this yet.** Exactly like Block 09, the
-only callers of this composed flow are tests — wiring a real, periodic (or
-on-demand) health check into a running process is a later block's job
-(most likely alongside routing/execution, once there's a reason to act on
-health data).
+**One route calls this flow (Block 14A).** The authenticated
+`POST /v1/vendors/:id/accounts/:accountId/verify` action
+(`services/providerVerificationService.ts`) composes the same steps —
+credential access, `adapter.checkHealth()` once, `recordObservation()` —
+on demand for an administrator. Normal request execution and routing do
+not use this flow. No scheduled/periodic health check exists yet; that
+remains a later block's job.
 
 ## Model Catalog
 

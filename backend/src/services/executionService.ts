@@ -11,13 +11,14 @@ import { WorkloadsRepository } from "../repositories/workloadsRepository.js";
 import type { InhouseApiKeyRow, ModelRow, NewUsageLedgerEntry, VendorRow } from "../repositories/types.js";
 import { type AdapterRegistry, createDefaultAdapterRegistry } from "./adapters/adapterRegistry.js";
 import { getDecryptedCredentialSecret } from "./credentialSecretAccess.js";
-import type {
-  NormalizedProviderError,
-  NormalizedProviderRequest,
-  NormalizedProviderResponse,
-  NormalizedProviderUsage,
-  NormalizedStreamEvent,
-  ProviderStreamResult,
+import {
+  DEFAULT_PROVIDER_TIMEOUT_MS,
+  type NormalizedProviderError,
+  type NormalizedProviderRequest,
+  type NormalizedProviderResponse,
+  type NormalizedProviderUsage,
+  type NormalizedStreamEvent,
+  type ProviderStreamResult,
 } from "./providerAdapter.js";
 import { RoutingService, type RoutingCandidate } from "./routingService.js";
 import { boundedBackoffMs, healthRank, isRetryableCategory, pickFallbackRule } from "./execution/failureClassification.js";
@@ -32,7 +33,6 @@ import type {
   ExecutionStreamOutcome,
 } from "./execution/types.js";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_ATTEMPTS = 1;
 
 /** Resolves after `ms`, or immediately when `signal` aborts — so a cancelled request never sits out a retry backoff. */
@@ -271,7 +271,7 @@ export class ExecutionService {
       };
     }
 
-    const timeoutMs = candidate.retryPolicy?.timeoutMs ?? vendor.timeout_ms ?? DEFAULT_TIMEOUT_MS;
+    const timeoutMs = candidate.retryPolicy?.timeoutMs ?? vendor.timeout_ms ?? DEFAULT_PROVIDER_TIMEOUT_MS;
     const maxAttempts = Math.max(1, candidate.retryPolicy?.maxAttempts ?? vendor.retry_max_attempts ?? DEFAULT_MAX_ATTEMPTS);
     const normalizedRequest: NormalizedProviderRequest = {
       model: model.provider_model_id,

@@ -63,6 +63,13 @@ export interface ProviderHealthCheckResult {
 }
 
 /**
+ * The timeout applied to an outbound provider call when neither the routing
+ * policy nor the vendor row (`vendors.timeout_ms`) configures one. Shared by
+ * execution and admin verification so the default lives in exactly one place.
+ */
+export const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
+
+/**
  * Everything a protocol adapter needs to reach a *specific configured*
  * vendor/account — sourced entirely from database configuration (`vendors`),
  * never hardcoded. Deliberately excludes anything routing- or

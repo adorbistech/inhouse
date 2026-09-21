@@ -110,7 +110,7 @@ export async function buildApp(config: AppConfig, options: BuildAppOptions = {})
     registerCapabilityRoutes(app, options.pool, config);
     registerWorkloadRoutes(app, options.pool, config);
     registerModelRoutes(app, options.pool, config);
-    registerProviderHealthRoutes(app, options.pool, config);
+    registerProviderHealthRoutes(app, options.pool, config, options.credentialVault, options.adapterRegistry);
     registerRoutingRoutes(app, options.pool, config);
     registerApiKeyRoutes(app, options.pool, config);
     registerExecutionRoutes(app, options.pool, config, options.credentialVault, options.adapterRegistry);

@@ -183,15 +183,17 @@ A vendor may have multiple accounts; nothing in this API assumes a fixed
 |---|---|---|
 | `GET` | `/v1/vendors/:id/accounts/:accountId/health` | Current health snapshot |
 | `GET` | `/v1/vendors/:id/accounts/:accountId/health/events` | Recent observation history, most recent first. Optional `?limit=` (default 50, max 200) |
+| `POST` | `/v1/vendors/:id/accounts/:accountId/verify` | Block 14A. Requires the admin token (client API keys are rejected). Validates that the account belongs to the vendor (404 otherwise, including cross-vendor), that vendor and account are enabled, that an adapter is registered for the vendor's protocol, and that an enabled credential exists (409 otherwise) — all before any secret is decrypted. Then performs exactly one bounded adapter health check (`vendors.timeout_ms`, else the shared default), records the result as a health observation/event via `ProviderHealthService`, and writes a `vendor_account.verified` audit event. Returns `{ verification: { vendorId, vendorAccountId, protocol, status, latencyMs, errorCategory, safeErrorCode, message, checkedAt } }` — never a provider response body or credential. A credential that cannot be decrypted yields `unhealthy` / `configuration` / `CREDENTIAL_UNAVAILABLE` without contacting the provider. Creates no usage-ledger row, performs no model execution or routing, and has no retry or fallback |
 
-Read-only in this block, deliberately: there is no write endpoint.
+There is no endpoint that accepts a caller-supplied health observation.
+The only write action is `POST .../verify` (below), which records an
+observation only as the result of a real adapter check.
 `status` is one of `healthy` / `degraded` / `unhealthy` / `unknown` —
 `unknown` means this account has never been observed (no row exists
-yet), not a stored value. Recording an observation
-(`ProviderHealthService.recordObservation`, `services/providerHealthService.ts`)
-is reserved for a future, trusted provider adapter to call directly;
-exposing it over HTTP today would let any caller fabricate an account's
-health with no real check behind it. See `docs/PROVIDER_HEALTH.md` for
+yet), not a stored value. Observations are persisted only through
+`ProviderHealthService.recordObservation` (`services/providerHealthService.ts`),
+called by the verification service after a real adapter check; exposing it
+directly over HTTP would let any caller fabricate an account's health. See `docs/PROVIDER_HEALTH.md` for
 the full model, including the `ProviderAdapter` interface a later block
 will implement.
 
