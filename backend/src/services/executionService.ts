@@ -10,6 +10,7 @@ import { VendorsRepository } from "../repositories/vendorsRepository.js";
 import { WorkloadsRepository } from "../repositories/workloadsRepository.js";
 import type { InhouseApiKeyRow, ModelRow, NewUsageLedgerEntry, VendorRow } from "../repositories/types.js";
 import { type AdapterRegistry, createDefaultAdapterRegistry } from "./adapters/adapterRegistry.js";
+import { isUsableCredential, selectCandidateCredential } from "./accountCredentialSelection.js";
 import { getDecryptedCredentialSecret } from "./credentialSecretAccess.js";
 import {
   DEFAULT_PROVIDER_TIMEOUT_MS,
@@ -153,8 +154,10 @@ export class ExecutionService {
 
     for (const account of sorted) {
       const credentials = await this.vendorCredentials.listByVendorAccountId(account.id);
-      const enabledCredential = credentials.find((c) => c.status === "enabled");
-      if (!enabledCredential) continue;
+      // Structural rejection first: no enabled credential, or an external-secretRef-only one, is
+      // skipped without a decrypt attempt.
+      const enabledCredential = selectCandidateCredential(credentials);
+      if (!enabledCredential || !isUsableCredential(enabledCredential)) continue;
       try {
         const secret = await getDecryptedCredentialSecret(this.pool, this.vault, enabledCredential.id);
         return { ok: true, accountId: account.id, secret };
@@ -217,6 +220,33 @@ export class ExecutionService {
       };
     }
 
+    const adapter = this.adapterRegistry.get(vendor.protocol);
+    if (!adapter) {
+      state.attempts.push({
+        attemptNumber: state.nextAttemptNumber++,
+        tierId: candidate.tierId,
+        tierNumber: candidate.tierNumber,
+        vendorId: vendor.id,
+        vendorSlug: vendor.slug,
+        vendorAccountId: null,
+        modelId: model.id,
+        isFallback,
+        ok: false,
+        errorCategory: "configuration",
+        safeErrorCode: null,
+        latencyMs: null,
+      });
+      return {
+        ok: false,
+        category: "configuration",
+        safeErrorCode: null,
+        message: `No provider adapter is registered for protocol "${vendor.protocol}".`,
+        vendor,
+        accountId: null,
+        model,
+      };
+    }
+
     const accountSelection = await this.selectAccountAndSecret(candidate);
     if (!accountSelection.ok) {
       state.attempts.push({
@@ -240,33 +270,6 @@ export class ExecutionService {
         message: accountSelection.message,
         vendor,
         accountId: null,
-        model,
-      };
-    }
-
-    const adapter = this.adapterRegistry.get(vendor.protocol);
-    if (!adapter) {
-      state.attempts.push({
-        attemptNumber: state.nextAttemptNumber++,
-        tierId: candidate.tierId,
-        tierNumber: candidate.tierNumber,
-        vendorId: vendor.id,
-        vendorSlug: vendor.slug,
-        vendorAccountId: accountSelection.accountId,
-        modelId: model.id,
-        isFallback,
-        ok: false,
-        errorCategory: "configuration",
-        safeErrorCode: null,
-        latencyMs: null,
-      });
-      return {
-        ok: false,
-        category: "configuration",
-        safeErrorCode: null,
-        message: `No provider adapter is registered for protocol "${vendor.protocol}".`,
-        vendor,
-        accountId: accountSelection.accountId,
         model,
       };
     }

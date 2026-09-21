@@ -5,6 +5,7 @@ import { VendorAccountsRepository } from "../repositories/vendorAccountsReposito
 import { VendorCredentialsRepository } from "../repositories/vendorCredentialsRepository.js";
 import { VendorsRepository } from "../repositories/vendorsRepository.js";
 import type { AdapterRegistry } from "./adapters/adapterRegistry.js";
+import { isUsableCredential, selectCandidateCredential } from "./accountCredentialSelection.js";
 import { ProviderHealthService } from "./providerHealthService.js";
 
 export const ACCOUNT_READINESS_STATES = [
@@ -63,35 +64,7 @@ export interface AccountReadinessInput {
   health: VendorAccountHealthRow | null;
 }
 
-/**
- * The credential a verification or execution attempt would pick: the
- * first `enabled` credential ordered by `created_at` ascending, with `id`
- * as a stable tie-break. This mirrors what `executionService` and
- * `providerVerificationService` do today (both take the first enabled row
- * of `listByVendorAccountId`, which orders by `created_at`); it is
- * documented and made deterministic here without changing either of them.
- * A disabled credential is never a candidate, even if it is older.
- */
-export function selectCandidateCredential(credentials: VendorCredentialRow[]): VendorCredentialRow | null {
-  const enabled = credentials
-    .filter((c) => c.status === "enabled")
-    .sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return enabled[0] ?? null;
-}
-
-/**
- * Only an INHOUSE-vault-managed secret can be decrypted by verification and
- * execution; an external `secretRef` cannot. This inspects which columns
- * are populated — it never decrypts anything.
- */
-function isUsable(credential: VendorCredentialRow): boolean {
-  return (
-    credential.secret_ciphertext !== null &&
-    credential.secret_iv !== null &&
-    credential.secret_auth_tag !== null &&
-    credential.secret_encryption_version !== null
-  );
-}
+export { selectCandidateCredential };
 
 /**
  * Pure, deterministic, read-time derivation of a provider account's
@@ -112,7 +85,7 @@ export function deriveAccountReadiness(input: AccountReadinessInput): AccountRea
   const credential = {
     present: input.credentials.length > 0,
     enabled: candidate !== null,
-    usable: candidate !== null && isUsable(candidate),
+    usable: candidate !== null && isUsableCredential(candidate),
     lastTestedAt: candidate?.last_tested_at ?? null,
     lastSuccessfulAt: candidate?.last_successful_at ?? null,
   };
